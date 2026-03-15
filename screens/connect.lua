@@ -36,15 +36,16 @@ function M.draw(state)
         color = status_color, size = 18, bold = true,
     })
 
-    -- Host card
+    -- Server card
     local host_y = status_y + 70
     screen.draw_card(card_x, host_y, card_w, 60, {
-        bg = theme.card_bg, border = state.edit_field == "host" and theme.accent or theme.card_border, radius = 6,
+        bg = theme.card_bg,
+        border = state.edit_field == "host" and theme.accent or theme.card_border,
+        radius = 6,
     })
-    screen.draw_text("HOST", card_x + 16, host_y + 6, {color = theme.text_dim, size = 11})
+    screen.draw_text("SERVER", card_x + 16, host_y + 6, {color = theme.text_dim, size = 11})
     screen.draw_text(state.host, card_x + 16, host_y + 24, {color = theme.text, size = 18, bold = true})
     if state.edit_field == "host" then
-        -- Show left/right arrows hint
         local hint = "\226\151\128 \226\151\182 adjust last octet"
         screen.draw_text(hint, card_x + card_w - 16 - screen.get_text_width(hint, 10, false), host_y + 28,
             {color = theme.text_dim, size = 10})
@@ -53,9 +54,11 @@ function M.draw(state)
     -- Port card
     local port_y = host_y + 80
     screen.draw_card(card_x, port_y, card_w, 60, {
-        bg = theme.card_bg, border = state.edit_field == "port" and theme.accent or theme.card_border, radius = 6,
+        bg = theme.card_bg,
+        border = state.edit_field == "port" and theme.accent or theme.card_border,
+        radius = 6,
     })
-    screen.draw_text("PORT", card_x + 16, port_y + 6, {color = theme.text_dim, size = 11})
+    screen.draw_text("DAEMON PORT", card_x + 16, port_y + 6, {color = theme.text_dim, size = 11})
     screen.draw_text(tostring(state.port), card_x + 16, port_y + 24, {color = theme.text, size = 18, bold = true})
     if state.edit_field == "port" then
         local hint = "\226\151\128 \226\151\182 adjust port"
@@ -65,33 +68,27 @@ function M.draw(state)
 
     -- SSH card
     local ssh_y = port_y + 80
-    local ssh_label = state.ssh_enabled and "SSH TUNNEL: ON" or "SSH TUNNEL: OFF"
-    local ssh_border = state.edit_field == "ssh_user" and theme.accent
-        or state.edit_field == "ssh_key" and theme.accent
-        or theme.card_border
+    local ssh_border = state.ssh_enabled and theme.positive or theme.card_border
     screen.draw_card(card_x, ssh_y, card_w, 60, {
         bg = theme.card_bg, border = ssh_border, radius = 6,
     })
+
+    local ssh_label = state.ssh_enabled and "SSH TUNNEL: ON" or "SSH TUNNEL: OFF"
     screen.draw_text(ssh_label, card_x + 16, ssh_y + 6, {
         color = state.ssh_enabled and theme.positive or theme.text_dim, size = 11,
     })
+
     if state.ssh_enabled then
-        local user_str = "User: " .. state.ssh_user
-        if state.ssh_key_path ~= "" then
-            user_str = user_str .. "  Key: " .. state.ssh_key_path
-        end
-        screen.draw_text(user_str, card_x + 16, ssh_y + 26, {color = theme.text, size = 14})
-        if state.edit_field == "ssh_user" then
-            local hint = "\226\151\128 \226\151\182 cycle user"
-            screen.draw_text(hint, card_x + card_w - 16 - screen.get_text_width(hint, 10, false), ssh_y + 40,
-                {color = theme.text_dim, size = 10})
-        elseif state.edit_field == "ssh_key" then
-            local hint = "\226\151\128 \226\151\182 cycle key"
-            screen.draw_text(hint, card_x + card_w - 16 - screen.get_text_width(hint, 10, false), ssh_y + 40,
-                {color = theme.text_dim, size = 10})
-        end
+        screen.draw_text("Tunnels daemon port via SSH to server", card_x + 16, ssh_y + 24, {
+            color = theme.text, size = 13,
+        })
+        screen.draw_text("Uses ~/.ssh/config for auth", card_x + 16, ssh_y + 40, {
+            color = theme.text_dim, size = 11,
+        })
     else
-        screen.draw_text("Press Y to enable", card_x + 16, ssh_y + 28, {color = theme.text_dim, size = 13})
+        screen.draw_text("Press Y to enable SSH tunneling", card_x + 16, ssh_y + 28, {
+            color = theme.text_dim, size = 13,
+        })
     end
 
     -- Connect button
@@ -130,25 +127,10 @@ end
 -- @param button string
 -- @param action string
 -- @return string|nil  action to perform: "connect"
--- Common SSH users and key paths for cycling
-local ssh_users = {"root", "pi", "cartridge", "admin", "ubuntu", "deck"}
-local ssh_keys = {"", "/root/.ssh/id_ed25519", "/root/.ssh/id_rsa", "/home/pi/.ssh/id_ed25519"}
-
-local function cycle_value(list, current, delta)
-    local idx = 1
-    for i, v in ipairs(list) do
-        if v == current then idx = i; break end
-    end
-    idx = idx + delta
-    if idx < 1 then idx = #list end
-    if idx > #list then idx = 1 end
-    return list[idx]
-end
-
 function M.on_input(state, button, action)
     if action ~= "press" and action ~= "repeat" then return nil end
 
-    -- Y toggles SSH on any mode
+    -- Y toggles SSH
     if button == "y" and action == "press" then
         state.ssh_enabled = not state.ssh_enabled
         return nil
@@ -186,33 +168,14 @@ function M.on_input(state, button, action)
             elseif button == "dpad_down" then
                 state.port = math.max(1, state.port - 100)
             end
-        elseif state.edit_field == "ssh_user" then
-            if button == "dpad_right" or button == "dpad_up" then
-                state.ssh_user = cycle_value(ssh_users, state.ssh_user, 1)
-            elseif button == "dpad_left" or button == "dpad_down" then
-                state.ssh_user = cycle_value(ssh_users, state.ssh_user, -1)
-            end
-        elseif state.edit_field == "ssh_key" then
-            if button == "dpad_right" or button == "dpad_up" then
-                state.ssh_key_path = cycle_value(ssh_keys, state.ssh_key_path, 1)
-            elseif button == "dpad_left" or button == "dpad_down" then
-                state.ssh_key_path = cycle_value(ssh_keys, state.ssh_key_path, -1)
-            end
         end
         if button == "start" then
-            -- Cycle through editable fields
-            local fields = {"host", "port"}
-            if state.ssh_enabled then
-                fields[#fields + 1] = "ssh_user"
-                fields[#fields + 1] = "ssh_key"
+            -- Cycle between host and port
+            if state.edit_field == "host" then
+                state.edit_field = "port"
+            else
+                state.edit_field = "host"
             end
-            local idx = 1
-            for i, f in ipairs(fields) do
-                if f == state.edit_field then idx = i; break end
-            end
-            idx = idx + 1
-            if idx > #fields then idx = 1 end
-            state.edit_field = fields[idx]
         end
         return nil
     end

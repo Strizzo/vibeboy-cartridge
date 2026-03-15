@@ -22,8 +22,6 @@ local state = {
 
     -- SSH tunnel
     ssh_enabled = false,
-    ssh_user = "root",
-    ssh_key_path = "",
     ssh_active = false,
     local_port = nil,
 
@@ -60,8 +58,6 @@ local function save_settings()
     storage.save("vibeboy_settings", {
         host = state.host, port = state.port,
         ssh_enabled = state.ssh_enabled,
-        ssh_user = state.ssh_user,
-        ssh_key_path = state.ssh_key_path,
     })
 end
 
@@ -71,8 +67,6 @@ local function load_settings()
         state.host = data.host or state.host
         state.port = data.port or state.port
         if data.ssh_enabled ~= nil then state.ssh_enabled = data.ssh_enabled end
-        state.ssh_user = data.ssh_user or state.ssh_user
-        state.ssh_key_path = data.ssh_key_path or state.ssh_key_path
     end
 end
 
@@ -184,12 +178,8 @@ local function do_connect()
 
     -- Open SSH tunnel if enabled
     if state.ssh_enabled then
-        local key = nil
-        if state.ssh_key_path ~= "" then key = state.ssh_key_path end
         local result = ssh.tunnel({
             host = state.host,
-            user = state.ssh_user,
-            key_path = key,
             remote_port = state.port,
         })
         if not result.ok then
