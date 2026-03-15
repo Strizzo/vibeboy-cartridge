@@ -32,7 +32,23 @@ cargo run -- run --path /path/to/vibeboy-cartridge
 
 ## Configuration
 
-Host, port, and SSH settings are configured on the connect screen and persisted automatically.
+Host, port, and SSH toggle are configured on the connect screen and persisted automatically.
+
+### SSH Tunnel
+
+When SSH is enabled, VibeBoy tunnels the daemon port through SSH so the daemon doesn't need to be exposed publicly. Authentication is handled by the system SSH client using `~/.ssh/config`.
+
+To set it up, SSH into your device and configure the remote server:
+
+```
+# ~/.ssh/config on the device
+Host myserver
+  HostName 123.45.67.89
+  User youruser
+  IdentityFile ~/.ssh/id_ed25519
+```
+
+Then in VibeBoy, set the server IP, enable SSH with Y, and press A to connect.
 
 ## License
 
