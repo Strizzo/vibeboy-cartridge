@@ -18,7 +18,8 @@ local state = {
     connected = false,
     connecting = false,
     connect_error = "",
-    edit_field = nil,  -- nil, "host", "port"
+    edit_field = nil,  -- nil, "host", "port", "ssh_user"
+    host_octet = 1,    -- which IP octet is being edited (1-4)
 
     -- SSH tunnel
     ssh_enabled = false,

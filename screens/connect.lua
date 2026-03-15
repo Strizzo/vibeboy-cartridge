@@ -18,8 +18,20 @@ local function cycle_value(list, current, delta)
     return list[idx]
 end
 
+local function parse_host(host)
+    local parts = {}
+    for p in host:gmatch("[^.]+") do
+        parts[#parts + 1] = tonumber(p) or 0
+    end
+    while #parts < 4 do parts[#parts + 1] = 0 end
+    return parts
+end
+
+local function build_host(parts)
+    return parts[1] .. "." .. parts[2] .. "." .. parts[3] .. "." .. parts[4]
+end
+
 --- Draw the connect screen.
--- @param state table  global app state
 function M.draw(state)
     ui.draw_header("VibeBoy")
 
@@ -52,17 +64,40 @@ function M.draw(state)
 
     -- Server card
     local host_y = status_y + 70
+    local editing_host = state.edit_field == "host"
     screen.draw_card(card_x, host_y, card_w, 60, {
         bg = theme.card_bg,
-        border = state.edit_field == "host" and theme.accent or theme.card_border,
+        border = editing_host and theme.accent or theme.card_border,
         radius = 6,
     })
     screen.draw_text("SERVER", card_x + 16, host_y + 6, {color = theme.text_dim, size = 11})
-    screen.draw_text(state.host, card_x + 16, host_y + 24, {color = theme.text, size = 18, bold = true})
-    if state.edit_field == "host" then
-        local hint = "\226\151\128 \226\151\182 adjust last octet"
+
+    if editing_host then
+        -- Draw each octet separately, highlight the selected one
+        local parts = parse_host(state.host)
+        local ox = card_x + 16
+        local octet = state.host_octet or 1
+        for i = 1, 4 do
+            local octet_str = tostring(parts[i])
+            local is_sel = (i == octet)
+            local c = is_sel and theme.accent or theme.text
+            if is_sel then
+                -- Underline the selected octet
+                local ow = screen.get_text_width(octet_str, 18, true)
+                screen.draw_rect(ox, host_y + 42, ow, 2, {color = theme.accent, filled = true})
+            end
+            screen.draw_text(octet_str, ox, host_y + 24, {color = c, size = 18, bold = true})
+            ox = ox + screen.get_text_width(octet_str, 18, true)
+            if i < 4 then
+                screen.draw_text(".", ox, host_y + 24, {color = theme.text_dim, size = 18, bold = true})
+                ox = ox + screen.get_text_width(".", 18, true)
+            end
+        end
+        local hint = "\226\151\132\226\151\182 octet  \226\151\128\226\151\182 value"
         screen.draw_text(hint, card_x + card_w - 16 - screen.get_text_width(hint, 10, false), host_y + 28,
             {color = theme.text_dim, size = 10})
+    else
+        screen.draw_text(state.host, card_x + 16, host_y + 24, {color = theme.text, size = 18, bold = true})
     end
 
     -- Port card
@@ -138,7 +173,7 @@ function M.draw(state)
     local hints = {{"A", "Connect", theme.btn_a}, {"Y", "SSH", theme.btn_y}}
     if state.edit_field then
         hints[#hints + 1] = {"B", "Done", theme.btn_b}
-        hints[#hints + 1] = {"\226\151\128\226\151\182", "Adjust", theme.btn_l}
+        hints[#hints + 1] = {"START", "Next field", theme.btn_r}
     else
         hints[#hints + 1] = {"START", "Edit", theme.btn_r}
     end
@@ -162,21 +197,26 @@ function M.on_input(state, button, action)
             return nil
         end
         if state.edit_field == "host" then
-            local parts = {}
-            for p in state.host:gmatch("[^.]+") do
-                parts[#parts + 1] = tonumber(p) or 0
-            end
-            while #parts < 4 do parts[#parts + 1] = 0 end
+            local parts = parse_host(state.host)
+            local octet = state.host_octet or 1
             if button == "dpad_right" then
-                parts[4] = math.min(255, parts[4] + 1)
+                parts[octet] = math.min(255, parts[octet] + 1)
             elseif button == "dpad_left" then
-                parts[4] = math.max(0, parts[4] - 1)
+                parts[octet] = math.max(0, parts[octet] - 1)
             elseif button == "dpad_up" then
-                parts[4] = math.min(255, parts[4] + 10)
+                -- Move to previous octet
+                state.host_octet = math.max(1, octet - 1)
             elseif button == "dpad_down" then
-                parts[4] = math.max(0, parts[4] - 10)
+                -- Move to next octet
+                state.host_octet = math.min(4, octet + 1)
+            elseif button == "a" then
+                -- Fast increment by 10
+                parts[octet] = math.min(255, parts[octet] + 10)
+            elseif button == "x" then
+                -- Fast decrement by 10
+                parts[octet] = math.max(0, parts[octet] - 10)
             end
-            state.host = parts[1] .. "." .. parts[2] .. "." .. parts[3] .. "." .. parts[4]
+            state.host = build_host(parts)
         elseif state.edit_field == "port" then
             if button == "dpad_right" then
                 state.port = math.min(65535, state.port + 1)
@@ -207,6 +247,10 @@ function M.on_input(state, button, action)
             idx = idx + 1
             if idx > #fields then idx = 1 end
             state.edit_field = fields[idx]
+            -- Reset octet selection when entering host
+            if fields[idx] == "host" then
+                state.host_octet = 1
+            end
         end
         return nil
     end
@@ -216,6 +260,7 @@ function M.on_input(state, button, action)
         return "connect"
     elseif button == "start" then
         state.edit_field = "host"
+        state.host_octet = 1
     end
     return nil
 end
