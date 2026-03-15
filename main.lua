@@ -22,6 +22,7 @@ local state = {
 
     -- SSH tunnel
     ssh_enabled = false,
+    ssh_user = "root",
     ssh_active = false,
     local_port = nil,
 
@@ -54,10 +55,15 @@ local state = {
 
 -- ── Persistence ────────────────────────────────────────────────────────────
 
+-- SSH keys are looked up in this directory on the SD card.
+-- Users drop their private key here from their computer.
+local SSH_KEY_DIR = "/roms/Cartridge/ssh"
+
 local function save_settings()
     storage.save("vibeboy_settings", {
         host = state.host, port = state.port,
         ssh_enabled = state.ssh_enabled,
+        ssh_user = state.ssh_user,
     })
 end
 
@@ -67,6 +73,7 @@ local function load_settings()
         state.host = data.host or state.host
         state.port = data.port or state.port
         if data.ssh_enabled ~= nil then state.ssh_enabled = data.ssh_enabled end
+        state.ssh_user = data.ssh_user or state.ssh_user
     end
 end
 
@@ -180,6 +187,8 @@ local function do_connect()
     if state.ssh_enabled then
         local result = ssh.tunnel({
             host = state.host,
+            user = state.ssh_user,
+            key_dir = SSH_KEY_DIR,
             remote_port = state.port,
         })
         if not result.ok then

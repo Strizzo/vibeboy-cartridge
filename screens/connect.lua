@@ -4,6 +4,20 @@ local ui = require("ui")
 
 local M = {}
 
+-- Common SSH users for cycling
+local ssh_users = {"root", "srizzo", "pi", "admin", "ubuntu", "deck", "ark"}
+
+local function cycle_value(list, current, delta)
+    local idx = 1
+    for i, v in ipairs(list) do
+        if v == current then idx = i; break end
+    end
+    idx = idx + delta
+    if idx < 1 then idx = #list end
+    if idx > #list then idx = 1 end
+    return list[idx]
+end
+
 --- Draw the connect screen.
 -- @param state table  global app state
 function M.draw(state)
@@ -68,7 +82,10 @@ function M.draw(state)
 
     -- SSH card
     local ssh_y = port_y + 80
-    local ssh_border = state.ssh_enabled and theme.positive or theme.card_border
+    local ssh_editing = state.edit_field == "ssh_user"
+    local ssh_border = ssh_editing and theme.accent
+        or state.ssh_enabled and theme.positive
+        or theme.card_border
     screen.draw_card(card_x, ssh_y, card_w, 60, {
         bg = theme.card_bg, border = ssh_border, radius = 6,
     })
@@ -79,12 +96,18 @@ function M.draw(state)
     })
 
     if state.ssh_enabled then
-        screen.draw_text("Tunnels daemon port via SSH to server", card_x + 16, ssh_y + 24, {
-            color = theme.text, size = 13,
+        local user_str = "User: " .. state.ssh_user
+        screen.draw_text(user_str, card_x + 16, ssh_y + 24, {
+            color = theme.text, size = 14, bold = ssh_editing,
         })
-        screen.draw_text("Uses ~/.ssh/config for auth", card_x + 16, ssh_y + 40, {
+        screen.draw_text("Key: auto from SD card or ~/.ssh/", card_x + 16, ssh_y + 42, {
             color = theme.text_dim, size = 11,
         })
+        if ssh_editing then
+            local hint = "\226\151\128 \226\151\182 cycle user"
+            screen.draw_text(hint, card_x + card_w - 16 - screen.get_text_width(hint, 10, false), ssh_y + 28,
+                {color = theme.text_dim, size = 10})
+        end
     else
         screen.draw_text("Press Y to enable SSH tunneling", card_x + 16, ssh_y + 28, {
             color = theme.text_dim, size = 13,
@@ -123,10 +146,6 @@ function M.draw(state)
 end
 
 --- Handle input on connect screen.
--- @param state  table   global app state
--- @param button string
--- @param action string
--- @return string|nil  action to perform: "connect"
 function M.on_input(state, button, action)
     if action ~= "press" and action ~= "repeat" then return nil end
 
@@ -168,14 +187,26 @@ function M.on_input(state, button, action)
             elseif button == "dpad_down" then
                 state.port = math.max(1, state.port - 100)
             end
+        elseif state.edit_field == "ssh_user" then
+            if button == "dpad_right" or button == "dpad_up" then
+                state.ssh_user = cycle_value(ssh_users, state.ssh_user, 1)
+            elseif button == "dpad_left" or button == "dpad_down" then
+                state.ssh_user = cycle_value(ssh_users, state.ssh_user, -1)
+            end
         end
         if button == "start" then
-            -- Cycle between host and port
-            if state.edit_field == "host" then
-                state.edit_field = "port"
-            else
-                state.edit_field = "host"
+            -- Cycle through editable fields
+            local fields = {"host", "port"}
+            if state.ssh_enabled then
+                fields[#fields + 1] = "ssh_user"
             end
+            local idx = 1
+            for i, f in ipairs(fields) do
+                if f == state.edit_field then idx = i; break end
+            end
+            idx = idx + 1
+            if idx > #fields then idx = 1 end
+            state.edit_field = fields[idx]
         end
         return nil
     end

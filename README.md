@@ -36,19 +36,17 @@ Host, port, and SSH toggle are configured on the connect screen and persisted au
 
 ### SSH Tunnel
 
-When SSH is enabled, VibeBoy tunnels the daemon port through SSH so the daemon doesn't need to be exposed publicly. Authentication is handled by the system SSH client using `~/.ssh/config`.
+When SSH is enabled, VibeBoy tunnels the daemon port through SSH so the daemon doesn't need to be exposed publicly.
 
-To set it up, SSH into your device and configure the remote server:
+**Setup (no SSH into the device needed):**
 
-```
-# ~/.ssh/config on the device
-Host myserver
-  HostName 123.45.67.89
-  User youruser
-  IdentityFile ~/.ssh/id_ed25519
-```
+1. Turn off the device and insert the SD card into your computer
+2. Create a `Cartridge/ssh/` folder on the SD card
+3. Copy your SSH private key there (e.g., `id_ed25519`)
+4. Eject, put the SD card back, boot the device
+5. In VibeBoy: set the server IP, set the SSH user, enable SSH with Y, press A to connect
 
-Then in VibeBoy, set the server IP, enable SSH with Y, and press A to connect.
+The cartridge auto-detects keys from `Cartridge/ssh/` on the SD card, falling back to `~/.ssh/` on the device. The SSH user can be cycled with the d-pad in edit mode (press START to switch fields).
 
 ## License
 
