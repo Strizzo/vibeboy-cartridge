@@ -23,7 +23,7 @@ local state = {
 
     -- SSH tunnel
     ssh_enabled = false,
-    ssh_user = "root",
+    ssh_user = "",  -- empty = auto (let SSH config decide)
     ssh_active = false,
     local_port = nil,
 

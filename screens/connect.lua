@@ -4,8 +4,8 @@ local ui = require("ui")
 
 local M = {}
 
--- Common SSH users for cycling
-local ssh_users = {"root", "srizzo", "pi", "admin", "ubuntu", "deck", "ark"}
+-- Common SSH users for cycling. "" means auto (let SSH config decide).
+local ssh_users = {"", "root", "srizzo", "pi", "admin", "ubuntu", "deck", "ark"}
 
 local function cycle_value(list, current, delta)
     local idx = 1
@@ -131,7 +131,8 @@ function M.draw(state)
     })
 
     if state.ssh_enabled then
-        local user_str = "User: " .. state.ssh_user
+        local display_user = state.ssh_user ~= "" and state.ssh_user or "auto (SSH config)"
+        local user_str = "User: " .. display_user
         screen.draw_text(user_str, card_x + 16, ssh_y + 24, {
             color = theme.text, size = 14, bold = ssh_editing,
         })
