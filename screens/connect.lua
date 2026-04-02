@@ -5,7 +5,7 @@ local ui = require("ui")
 local M = {}
 
 -- Common SSH users for cycling. "" means auto (let SSH config decide).
-local ssh_users = {"", "root", "srizzo", "pi", "admin", "ubuntu", "deck", "ark"}
+local ssh_users = {"", "root", "pi", "admin", "ubuntu", "deck", "ark"}
 
 local function cycle_value(list, current, delta)
     local idx = 1

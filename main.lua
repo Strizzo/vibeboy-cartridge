@@ -305,3 +305,7 @@ function on_render()
         session_screen.draw(state)
     end
 end
+
+function on_destroy()
+    close_tunnel()
+end
