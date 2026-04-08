@@ -54,6 +54,9 @@ local state = {
     -- Deferred initial connect
     needs_initial_connect = false,
     ready_to_connect = false,
+
+    -- First-run help
+    show_help = false,
 }
 
 -- ── Persistence ────────────────────────────────────────────────────────────
@@ -242,6 +245,11 @@ end
 
 function on_init()
     load_settings()
+    -- Show help on first launch (no saved settings yet)
+    local saved = storage.load("vibeboy_settings")
+    if not saved then
+        state.show_help = true
+    end
 end
 
 function on_update(dt)
@@ -280,6 +288,14 @@ function on_update(dt)
 end
 
 function on_input(button, action)
+    -- Dismiss help overlay
+    if state.show_help then
+        if action == "press" then
+            state.show_help = false
+        end
+        return
+    end
+
     if state.screen == "connect" then
         local result = connect_screen.on_input(state, button, action)
         if result == "connect" then
@@ -308,6 +324,63 @@ function on_input(button, action)
     end
 end
 
+local function draw_help()
+    local W, H = 720, 720
+    -- Dim background
+    screen.draw_rect(0, 0, W, H, {color = {10, 10, 15}, filled = true})
+
+    local cx = W / 2
+    local y = 60
+
+    -- Title
+    local title = "VibeBoy Setup"
+    local tw = screen.get_text_width(title, 22, true)
+    screen.draw_text(title, (W - tw) / 2, y, {color = theme.accent, size = 22, bold = true})
+    y = y + 40
+
+    -- Description
+    local lines = {
+        "VibeBoy lets you manage tmux sessions on a",
+        "remote server from your handheld.",
+        "",
+        "Before you start, you need:",
+        "",
+        "1. vibeboy-daemon running on your server",
+        "   github.com/Strizzo/vibeboy-daemon",
+        "",
+        "2. Your SSH key on the SD card at:",
+        "   Cartridge/ssh/id_ed25519",
+        "",
+        "Then in this app:",
+        "",
+        "  START    Edit connection settings",
+        "  X        Enter a new server IP",
+        "  Y        Enable SSH tunnel",
+        "  START    Switch between fields",
+        "  A        Connect",
+        "",
+        "The daemon listens on port 8766 by default.",
+        "SSH tunneling keeps the connection secure.",
+    }
+
+    for _, line in ipairs(lines) do
+        local color = theme.text_dim
+        if line:match("^%d%.") then
+            color = theme.text
+        elseif line:match("^  %u") then
+            color = theme.accent
+        end
+        screen.draw_text(line, 80, y, {color = color, size = 14, max_width = 560})
+        y = y + 22
+    end
+
+    -- Footer
+    y = H - 50
+    local hint = "Press any button to continue"
+    local hw = screen.get_text_width(hint, 14, false)
+    screen.draw_text(hint, (W - hw) / 2, y, {color = theme.text_dim, size = 14})
+end
+
 function on_render()
     screen.clear(theme.bg.r, theme.bg.g, theme.bg.b)
 
@@ -317,7 +390,9 @@ function on_render()
         state.ready_to_connect = true
     end
 
-    if state.screen == "connect" then
+    if state.show_help then
+        draw_help()
+    elseif state.screen == "connect" then
         connect_screen.draw(state)
     elseif state.screen == "dashboard" then
         dashboard_screen.draw(state)
