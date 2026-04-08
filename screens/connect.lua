@@ -18,53 +18,17 @@ local function cycle_value(list, current, delta)
     return list[idx]
 end
 
---- Load server list from config file on SD card + saved settings.
--- Config file format: one server per line, either hostname or IP.
--- Example: /roms/Cartridge/vibeboy/servers.txt
---   mothra:95.217.110.107
---   myserver:192.168.1.50
---   homelab.local
-function M.load_servers(state)
-    local servers = {}
-    local seen = {}
-
-    -- Read from SD card config file
-    local config_paths = {
-        "/roms/Cartridge/vibeboy/servers.txt",
-        "/roms/Cartridge/vibeboy-servers.txt",
-    }
-    for _, path in ipairs(config_paths) do
-        local f = io and io.open and io.open(path, "r")
-        if not f then
-            -- io is sandboxed — try http trick to read local file? No.
-            -- Fall back to checking if storage has servers
-            break
-        end
+local function parse_ip(host)
+    local parts = {}
+    for p in host:gmatch("[^.]+") do
+        parts[#parts + 1] = tonumber(p) or 0
     end
+    while #parts < 4 do parts[#parts + 1] = 0 end
+    return parts
+end
 
-    -- Load servers from storage (persisted from previous sessions)
-    local saved = storage.load("vibeboy_servers")
-    if saved and saved.list then
-        for _, entry in ipairs(saved.list) do
-            if not seen[entry] then
-                servers[#servers + 1] = entry
-                seen[entry] = true
-            end
-        end
-    end
-
-    -- Always include the current host if not in list
-    if not seen[state.host] then
-        servers[#servers + 1] = state.host
-        seen[state.host] = true
-    end
-
-    -- Default entries if empty
-    if #servers == 0 then
-        servers = {"192.168.1.100"}
-    end
-
-    return servers
+local function build_ip(parts)
+    return parts[1] .. "." .. parts[2] .. "." .. parts[3] .. "." .. parts[4]
 end
 
 --- Draw the connect screen.
@@ -107,14 +71,42 @@ function M.draw(state)
         radius = 6,
     })
     screen.draw_text("SERVER", card_x + 16, host_y + 6, {color = theme.text_dim, size = 11})
-    screen.draw_text(state.host, card_x + 16, host_y + 24, {
-        color = editing_host and theme.accent or theme.text,
-        size = 18, bold = true, max_width = card_w - 32,
-    })
-    if editing_host then
-        local hint = "\226\151\128 \226\151\182 cycle servers"
-        screen.draw_text(hint, card_x + card_w - 16 - screen.get_text_width(hint, 10, false), host_y + 28,
-            {color = theme.text_dim, size = 10})
+
+    if editing_host and state.host_edit_ip then
+        -- IP octet editing mode
+        local parts = parse_ip(state.host)
+        local ox = card_x + 16
+        local octet = state.host_octet or 1
+        for i = 1, 4 do
+            local octet_str = tostring(parts[i])
+            local is_sel = (i == octet)
+            local c = is_sel and theme.accent or theme.text
+            if is_sel then
+                local ow = screen.get_text_width(octet_str, 18, true)
+                screen.draw_rect(ox, host_y + 42, ow, 2, {color = theme.accent, filled = true})
+            end
+            screen.draw_text(octet_str, ox, host_y + 24, {color = c, size = 18, bold = true})
+            ox = ox + screen.get_text_width(octet_str, 18, true)
+            if i < 4 then
+                screen.draw_text(".", ox, host_y + 24, {color = theme.text_dim, size = 18, bold = true})
+                ox = ox + screen.get_text_width(".", 18, true)
+            end
+        end
+        local hint = "X:done  \226\151\132\226\151\182:octet  \226\151\128\226\151\182:value"
+        screen.draw_text(hint, card_x + card_w - 16 - screen.get_text_width(hint, 9, false), host_y + 28,
+            {color = theme.text_dim, size = 9})
+    elseif editing_host then
+        -- Server list cycling mode
+        screen.draw_text(state.host, card_x + 16, host_y + 24, {
+            color = theme.accent, size = 18, bold = true, max_width = card_w - 32,
+        })
+        local hint = "\226\151\128\226\151\182:cycle  X:new IP"
+        screen.draw_text(hint, card_x + card_w - 16 - screen.get_text_width(hint, 9, false), host_y + 28,
+            {color = theme.text_dim, size = 9})
+    else
+        screen.draw_text(state.host, card_x + 16, host_y + 24, {
+            color = theme.text, size = 18, bold = true, max_width = card_w - 32,
+        })
     end
 
     -- Port card
@@ -212,14 +204,53 @@ function M.on_input(state, button, action)
         -- Editing mode
         if button == "b" then
             state.edit_field = nil
+            state.host_edit_ip = false
             return nil
         end
+
         if state.edit_field == "host" then
-            -- Cycle through server list
-            if button == "dpad_right" or button == "dpad_down" then
-                state.host = cycle_value(state.servers, state.host, 1)
-            elseif button == "dpad_left" or button == "dpad_up" then
-                state.host = cycle_value(state.servers, state.host, -1)
+            if state.host_edit_ip then
+                -- IP octet editing mode
+                local parts = parse_ip(state.host)
+                local octet = state.host_octet or 1
+                if button == "dpad_right" then
+                    parts[octet] = math.min(255, parts[octet] + 1)
+                elseif button == "dpad_left" then
+                    parts[octet] = math.max(0, parts[octet] - 1)
+                elseif button == "dpad_up" then
+                    state.host_octet = math.max(1, octet - 1)
+                elseif button == "dpad_down" then
+                    state.host_octet = math.min(4, octet + 1)
+                elseif button == "a" then
+                    parts[octet] = math.min(255, parts[octet] + 10)
+                elseif button == "x" then
+                    -- Confirm new IP and add to server list
+                    state.host = build_ip(parts)
+                    -- Add to server list if not already there
+                    local found = false
+                    for _, s in ipairs(state.servers) do
+                        if s == state.host then found = true; break end
+                    end
+                    if not found then
+                        table.insert(state.servers, 1, state.host)
+                    end
+                    state.host_edit_ip = false
+                    return nil
+                end
+                state.host = build_ip(parts)
+            else
+                -- Server list cycling mode
+                if button == "dpad_right" or button == "dpad_down" then
+                    state.host = cycle_value(state.servers, state.host, 1)
+                elseif button == "dpad_left" or button == "dpad_up" then
+                    state.host = cycle_value(state.servers, state.host, -1)
+                elseif button == "x" then
+                    -- Enter IP editing mode to add a new server
+                    state.host_edit_ip = true
+                    state.host_octet = 1
+                    -- Start from 0.0.0.0 for a fresh IP
+                    state.host = "0.0.0.0"
+                end
             end
         elseif state.edit_field == "port" then
             if button == "dpad_right" then
@@ -238,7 +269,12 @@ function M.on_input(state, button, action)
                 state.ssh_user = cycle_value(ssh_users, state.ssh_user, -1)
             end
         end
+
         if button == "start" then
+            if state.host_edit_ip then
+                -- If in IP edit mode, exit it first
+                state.host_edit_ip = false
+            end
             -- Cycle through editable fields
             local fields = {"host", "port"}
             if state.ssh_enabled then
@@ -260,6 +296,7 @@ function M.on_input(state, button, action)
         return "connect"
     elseif button == "start" then
         state.edit_field = "host"
+        state.host_edit_ip = false
     end
     return nil
 end

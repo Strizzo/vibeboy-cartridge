@@ -20,6 +20,8 @@ local state = {
     connect_error = "",
     edit_field = nil,  -- nil, "host", "port", "ssh_user"
     servers = {},      -- list of configured servers (hostnames or IPs)
+    host_edit_ip = false, -- true = editing IP octets, false = cycling servers
+    host_octet = 1,
 
     -- SSH tunnel
     ssh_enabled = false,
@@ -83,7 +85,7 @@ local function load_settings()
 
     -- Ensure server list is populated
     if #state.servers == 0 then
-        state.servers = {state.host}
+        state.servers = {state.host, "localhost"}
     end
 
     -- Add current host to list if not present
