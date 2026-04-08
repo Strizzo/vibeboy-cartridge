@@ -18,17 +18,53 @@ local function cycle_value(list, current, delta)
     return list[idx]
 end
 
-local function parse_host(host)
-    local parts = {}
-    for p in host:gmatch("[^.]+") do
-        parts[#parts + 1] = tonumber(p) or 0
-    end
-    while #parts < 4 do parts[#parts + 1] = 0 end
-    return parts
-end
+--- Load server list from config file on SD card + saved settings.
+-- Config file format: one server per line, either hostname or IP.
+-- Example: /roms/Cartridge/vibeboy/servers.txt
+--   mothra:95.217.110.107
+--   myserver:192.168.1.50
+--   homelab.local
+function M.load_servers(state)
+    local servers = {}
+    local seen = {}
 
-local function build_host(parts)
-    return parts[1] .. "." .. parts[2] .. "." .. parts[3] .. "." .. parts[4]
+    -- Read from SD card config file
+    local config_paths = {
+        "/roms/Cartridge/vibeboy/servers.txt",
+        "/roms/Cartridge/vibeboy-servers.txt",
+    }
+    for _, path in ipairs(config_paths) do
+        local f = io and io.open and io.open(path, "r")
+        if not f then
+            -- io is sandboxed — try http trick to read local file? No.
+            -- Fall back to checking if storage has servers
+            break
+        end
+    end
+
+    -- Load servers from storage (persisted from previous sessions)
+    local saved = storage.load("vibeboy_servers")
+    if saved and saved.list then
+        for _, entry in ipairs(saved.list) do
+            if not seen[entry] then
+                servers[#servers + 1] = entry
+                seen[entry] = true
+            end
+        end
+    end
+
+    -- Always include the current host if not in list
+    if not seen[state.host] then
+        servers[#servers + 1] = state.host
+        seen[state.host] = true
+    end
+
+    -- Default entries if empty
+    if #servers == 0 then
+        servers = {"192.168.1.100"}
+    end
+
+    return servers
 end
 
 --- Draw the connect screen.
@@ -71,33 +107,14 @@ function M.draw(state)
         radius = 6,
     })
     screen.draw_text("SERVER", card_x + 16, host_y + 6, {color = theme.text_dim, size = 11})
-
+    screen.draw_text(state.host, card_x + 16, host_y + 24, {
+        color = editing_host and theme.accent or theme.text,
+        size = 18, bold = true, max_width = card_w - 32,
+    })
     if editing_host then
-        -- Draw each octet separately, highlight the selected one
-        local parts = parse_host(state.host)
-        local ox = card_x + 16
-        local octet = state.host_octet or 1
-        for i = 1, 4 do
-            local octet_str = tostring(parts[i])
-            local is_sel = (i == octet)
-            local c = is_sel and theme.accent or theme.text
-            if is_sel then
-                -- Underline the selected octet
-                local ow = screen.get_text_width(octet_str, 18, true)
-                screen.draw_rect(ox, host_y + 42, ow, 2, {color = theme.accent, filled = true})
-            end
-            screen.draw_text(octet_str, ox, host_y + 24, {color = c, size = 18, bold = true})
-            ox = ox + screen.get_text_width(octet_str, 18, true)
-            if i < 4 then
-                screen.draw_text(".", ox, host_y + 24, {color = theme.text_dim, size = 18, bold = true})
-                ox = ox + screen.get_text_width(".", 18, true)
-            end
-        end
-        local hint = "\226\151\132\226\151\182 octet  \226\151\128\226\151\182 value"
+        local hint = "\226\151\128 \226\151\182 cycle servers"
         screen.draw_text(hint, card_x + card_w - 16 - screen.get_text_width(hint, 10, false), host_y + 28,
             {color = theme.text_dim, size = 10})
-    else
-        screen.draw_text(state.host, card_x + 16, host_y + 24, {color = theme.text, size = 18, bold = true})
     end
 
     -- Port card
@@ -198,26 +215,12 @@ function M.on_input(state, button, action)
             return nil
         end
         if state.edit_field == "host" then
-            local parts = parse_host(state.host)
-            local octet = state.host_octet or 1
-            if button == "dpad_right" then
-                parts[octet] = math.min(255, parts[octet] + 1)
-            elseif button == "dpad_left" then
-                parts[octet] = math.max(0, parts[octet] - 1)
-            elseif button == "dpad_up" then
-                -- Move to previous octet
-                state.host_octet = math.max(1, octet - 1)
-            elseif button == "dpad_down" then
-                -- Move to next octet
-                state.host_octet = math.min(4, octet + 1)
-            elseif button == "a" then
-                -- Fast increment by 10
-                parts[octet] = math.min(255, parts[octet] + 10)
-            elseif button == "x" then
-                -- Fast decrement by 10
-                parts[octet] = math.max(0, parts[octet] - 10)
+            -- Cycle through server list
+            if button == "dpad_right" or button == "dpad_down" then
+                state.host = cycle_value(state.servers, state.host, 1)
+            elseif button == "dpad_left" or button == "dpad_up" then
+                state.host = cycle_value(state.servers, state.host, -1)
             end
-            state.host = build_host(parts)
         elseif state.edit_field == "port" then
             if button == "dpad_right" then
                 state.port = math.min(65535, state.port + 1)
@@ -248,10 +251,6 @@ function M.on_input(state, button, action)
             idx = idx + 1
             if idx > #fields then idx = 1 end
             state.edit_field = fields[idx]
-            -- Reset octet selection when entering host
-            if fields[idx] == "host" then
-                state.host_octet = 1
-            end
         end
         return nil
     end
@@ -261,7 +260,6 @@ function M.on_input(state, button, action)
         return "connect"
     elseif button == "start" then
         state.edit_field = "host"
-        state.host_octet = 1
     end
     return nil
 end

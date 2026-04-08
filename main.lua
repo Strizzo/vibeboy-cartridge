@@ -19,7 +19,7 @@ local state = {
     connecting = false,
     connect_error = "",
     edit_field = nil,  -- nil, "host", "port", "ssh_user"
-    host_octet = 1,    -- which IP octet is being edited (1-4)
+    servers = {},      -- list of configured servers (hostnames or IPs)
 
     -- SSH tunnel
     ssh_enabled = false,
@@ -65,6 +65,7 @@ local function save_settings()
         host = state.host, port = state.port,
         ssh_enabled = state.ssh_enabled,
         ssh_user = state.ssh_user,
+        servers = state.servers,
     })
 end
 
@@ -75,6 +76,23 @@ local function load_settings()
         state.port = data.port or state.port
         if data.ssh_enabled ~= nil then state.ssh_enabled = data.ssh_enabled end
         state.ssh_user = data.ssh_user or state.ssh_user
+        if data.servers and #data.servers > 0 then
+            state.servers = data.servers
+        end
+    end
+
+    -- Ensure server list is populated
+    if #state.servers == 0 then
+        state.servers = {state.host}
+    end
+
+    -- Add current host to list if not present
+    local found = false
+    for _, s in ipairs(state.servers) do
+        if s == state.host then found = true; break end
+    end
+    if not found then
+        table.insert(state.servers, 1, state.host)
     end
 end
 
