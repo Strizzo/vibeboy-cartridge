@@ -115,6 +115,7 @@ local function update_sessions(data)
         sdata.status = sdata.status or (sdata.attached and "attached" or "idle")
         sdata.pane_command = sdata.pane_command or ""
         sdata.session_type = sdata.session_type or "idle_shell"
+        sdata.response_options = sdata.response_options or {}
         -- Convert terminal string to lines array for the session screen
         if type(sdata.terminal) == "string" and sdata.terminal ~= "" then
             local lines = {}

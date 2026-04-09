@@ -118,27 +118,29 @@ local function draw_options(session, state)
 
     screen.draw_line(0, opts_y, 720, opts_y, {color = theme.border})
 
-    -- Combine response options and detected choices
+    -- Build options from daemon-provided response_options
     local all_opts = {}
     for _, o in ipairs(options) do
-        all_opts[#all_opts + 1] = {text = o.text, category = o.category, kind = "response"}
+        all_opts[#all_opts + 1] = {
+            text = o.text or "?",
+            category = o.category or "custom",
+            kind = o.keys and "keys" or "response",
+            key_sequence = o.keys,
+        }
     end
     for _, c in ipairs(choices) do
         all_opts[#all_opts + 1] = {
-            text = c.label,
+            text = c.label or c.text or "?",
             category = c.is_default and "approve" or "custom",
             kind = "choice",
-            key_sequence = c.key_sequence,
+            key_sequence = c.key_sequence or c.keys,
         }
     end
 
-    -- For plain sessions with no options, show default tmux actions
+    -- Fallback if daemon provides nothing
     if #all_opts == 0 then
         all_opts = {
             {text = "Interrupt (Ctrl+C)", category = "danger", kind = "keys", key_sequence = "C-c"},
-            {text = "Clear screen", category = "custom", kind = "keys", key_sequence = "clear"},
-            {text = "List files", category = "custom", kind = "keys", key_sequence = "ls -la"},
-            {text = "Top processes", category = "custom", kind = "keys", key_sequence = "top -bn1 | head -20"},
         }
     end
 
@@ -388,13 +390,19 @@ end
 function handle_idle(state, button, session, sid)
     if button == "a" then
         local opt = get_selected_option(state, session)
-        if opt and opt.key_sequence then
-            return {action = "send_keys", session_id = sid, payload = {keys = opt.key_sequence}}
+        if opt then
+            if opt.key_sequence then
+                return {action = "send_keys", session_id = sid, payload = {keys = opt.key_sequence}}
+            elseif opt.text then
+                return {action = "send_response", session_id = sid, payload = {text = opt.text}}
+            end
         end
     elseif button == "l2" then
         state.option_index = math.max(1, state.option_index - 1)
     elseif button == "r2" then
-        local n = 4 -- default options count
+        local options = session.response_options or {}
+        local choices = session.detected_choices or {}
+        local n = math.max(1, #options + #choices)
         state.option_index = math.min(n, state.option_index + 1)
     elseif button == "y" then
         return {action = "interrupt", session_id = sid}
