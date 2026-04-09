@@ -39,7 +39,7 @@ local function draw_session_card(session, y, is_selected, card_x, card_w)
 
     -- Session name
     local name_x = px + pill_w + 8
-    local name = session.session_name or "unknown"
+    local name = (session.session_name or "unknown"):gsub("[\128-\255]", "?")
     local max_name_w = card_w - pill_w - 120
     local nw = screen.get_text_width(name, 14, is_selected)
     if nw > max_name_w then

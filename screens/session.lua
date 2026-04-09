@@ -6,6 +6,12 @@ local M = {}
 
 local SCROLL_STEP = 3
 
+--- Strip any non-ASCII bytes from a string to prevent UTF-8 errors.
+local function safe_ascii(s)
+    if not s then return "" end
+    return s:gsub("[\128-\255]", "?")
+end
+
 -- ── Status Bar ──────────────────────────────────────────────────────────────
 
 local function draw_status_bar(session)
@@ -23,7 +29,7 @@ local function draw_status_bar(session)
     x = x + sw + 8
 
     -- Command
-    local cmd = session.pane_command or ""
+    local cmd = safe_ascii(session.pane_command or "")
     if cmd ~= "" then
         local max_cmd_w = 400
         local cw = screen.get_text_width(cmd, 11, false)
@@ -83,18 +89,9 @@ local function draw_terminal(session, state)
 
     local y = term_y + 4
     for i = start_line, end_line do
-        local line = lines[i] or ""
+        local line = safe_ascii(lines[i] or "")
         -- Truncate long lines
-        if #line > 100 then
-            local tw = screen.get_text_width(line, 12, false)
-            if tw > 700 then
-                while #line > 1 and screen.get_text_width(line .. "..", 12, false) > 700 do
-                    line = line:sub(1, -2)
-                end
-                line = line .. ".."
-            end
-        end
-        screen.draw_text(line, 8, y, {color = theme.text, size = 12})
+        screen.draw_text(line, 8, y, {color = theme.text, size = 12, max_width = 704})
         y = y + lh
     end
 
@@ -272,7 +269,7 @@ function M.draw(state)
 
     -- Header: "< L1  [session_name]  R1 >"
     local idx_display = tostring(state.session_index) .. "/" .. tostring(#state.sessions)
-    ui.draw_header(session.session_name or "Session", idx_display)
+    ui.draw_header(safe_ascii(session.session_name or "Session"), idx_display)
 
     -- Status bar
     draw_status_bar(session)
