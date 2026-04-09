@@ -110,6 +110,11 @@ local function update_sessions(data)
 
     for sid, sdata in pairs(sessions_map) do
         sdata.session_id = sid
+        -- Normalize fields from daemon API to what the UI expects
+        sdata.session_name = sdata.session_name or sdata.name or sid
+        sdata.status = sdata.status or (sdata.attached and "attached" or "idle")
+        sdata.pane_command = sdata.pane_command or ""
+        sdata.session_type = sdata.session_type or "idle_shell"
         list[#list + 1] = sdata
         ids[#ids + 1] = sid
     end

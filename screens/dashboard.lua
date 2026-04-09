@@ -65,7 +65,8 @@ local function draw_session_card(session, y, is_selected, card_x, card_w)
     end
 
     -- Status pill (right side)
-    ui.draw_status_pill(session.status, card_x + card_w - 70, y + 14, session.status)
+    local status = session.status or (session.attached and "attached" or "idle")
+    ui.draw_status_pill(status, card_x + card_w - 70, y + 14, status)
 end
 
 --- Draw the dashboard screen.
