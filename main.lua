@@ -115,6 +115,16 @@ local function update_sessions(data)
         sdata.status = sdata.status or (sdata.attached and "attached" or "idle")
         sdata.pane_command = sdata.pane_command or ""
         sdata.session_type = sdata.session_type or "idle_shell"
+        -- Convert terminal string to lines array for the session screen
+        if type(sdata.terminal) == "string" and sdata.terminal ~= "" then
+            local lines = {}
+            for line in (sdata.terminal .. "\n"):gmatch("(.-)\n") do
+                lines[#lines + 1] = line
+            end
+            sdata.screen_content = lines
+        else
+            sdata.screen_content = sdata.screen_content or {}
+        end
         list[#list + 1] = sdata
         ids[#ids + 1] = sid
     end

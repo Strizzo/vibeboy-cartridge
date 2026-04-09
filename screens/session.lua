@@ -135,6 +135,16 @@ local function draw_options(session, state)
         }
     end
 
+    -- For plain sessions with no options, show default tmux actions
+    if #all_opts == 0 then
+        all_opts = {
+            {text = "Interrupt (Ctrl+C)", category = "danger", kind = "keys", key_sequence = "C-c"},
+            {text = "Clear screen", category = "custom", kind = "keys", key_sequence = "clear"},
+            {text = "List files", category = "custom", kind = "keys", key_sequence = "ls -la"},
+            {text = "Top processes", category = "custom", kind = "keys", key_sequence = "top -bn1 | head -20"},
+        }
+    end
+
     local n = #all_opts
     if n == 0 then
         local msg = "No options"
@@ -234,14 +244,16 @@ local function get_session_hints(session)
         }
     elseif stype == "idle_shell" then
         hints = {
-            {"A", "Enter", theme.btn_a},
-            {"\226\134\145\226\134\147", "History", theme.btn_l},
+            {"A", "Run", theme.btn_a},
+            {"Y", "Ctrl+C", theme.btn_y},
+            {"L2/R2", "Options", theme.btn_l},
         }
     end
 
     -- Always show navigation hints
+    hints[#hints + 1] = {"B", "Back", theme.btn_b}
     hints[#hints + 1] = {"L1/R1", "Session", theme.btn_l}
-    hints[#hints + 1] = {"SEL", "Dash", theme.btn_r}
+    hints[#hints + 1] = {"\226\134\145\226\134\147", "Scroll"}
 
     return hints
 end
@@ -291,13 +303,14 @@ function M.on_input(state, button, action)
     local sid = session.session_id
 
     -- Universal controls
+    if button == "b" then return "dashboard" end
     if button == "l1" then return "prev_session" end
     if button == "r1" then return "next_session" end
-    if button == "l2" then
+    if button == "dpad_up" then
         state.terminal_scroll = state.terminal_scroll + SCROLL_STEP
         return nil
     end
-    if button == "r2" then
+    if button == "dpad_down" then
         state.terminal_scroll = math.max(0, state.terminal_scroll - SCROLL_STEP)
         return nil
     end
@@ -314,7 +327,7 @@ function M.on_input(state, button, action)
     elseif stype == "running_process" then
         return handle_running(button, sid)
     else
-        return handle_idle(button, sid)
+        return handle_idle(state, button, session, sid)
     end
 end
 
@@ -375,13 +388,19 @@ function handle_running(button, sid)
     return nil
 end
 
-function handle_idle(button, sid)
+function handle_idle(state, button, session, sid)
     if button == "a" then
-        return {action = "send_keys", session_id = sid, payload = {keys = "Enter"}}
-    elseif button == "dpad_up" then
-        return {action = "send_keys", session_id = sid, payload = {keys = "Up"}}
-    elseif button == "dpad_down" then
-        return {action = "send_keys", session_id = sid, payload = {keys = "Down"}}
+        local opt = get_selected_option(state, session)
+        if opt and opt.key_sequence then
+            return {action = "send_keys", session_id = sid, payload = {keys = opt.key_sequence}}
+        end
+    elseif button == "l2" then
+        state.option_index = math.max(1, state.option_index - 1)
+    elseif button == "r2" then
+        local n = 4 -- default options count
+        state.option_index = math.min(n, state.option_index + 1)
+    elseif button == "y" then
+        return {action = "interrupt", session_id = sid}
     end
     return nil
 end
