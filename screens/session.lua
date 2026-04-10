@@ -210,49 +210,14 @@ end
 -- ── Footer Hints ────────────────────────────────────────────────────────────
 
 local function get_session_hints(session)
-    local stype = session.session_type
-    local status = session.status
-    local hints = {}
-
-    if stype == "claude_code" then
-        if status == "waiting" then
-            hints = {
-                {"A", "Send", theme.btn_a},
-                {"B", "Escape", theme.btn_b},
-                {"Y", "Ghost", theme.btn_y},
-                {"\226\134\145\226\134\147", "Options", theme.btn_l},
-            }
-        elseif status == "thinking" then
-            hints = {
-                {"B", "Interrupt", theme.btn_b},
-            }
-        else
-            hints = {}
-        end
-    elseif stype == "interactive_prompt" then
-        hints = {
-            {"A", "Enter", theme.btn_a},
-            {"B", "Ctrl+C", theme.btn_b},
-            {"Y", "y", theme.btn_y},
-            {"X", "n", theme.btn_x},
-        }
-    elseif stype == "running_process" then
-        hints = {
-            {"B", "Ctrl+C", theme.btn_b},
-            {"Y", "Ctrl+Z", theme.btn_y},
-        }
-    elseif stype == "idle_shell" then
-        hints = {
-            {"A", "Run", theme.btn_a},
-            {"Y", "Ctrl+C", theme.btn_y},
-            {"L2/R2", "Options", theme.btn_l},
-        }
-    end
-
-    -- Always show navigation hints
-    hints[#hints + 1] = {"B", "Back", theme.btn_b}
-    hints[#hints + 1] = {"L1/R1", "Session", theme.btn_l}
-    hints[#hints + 1] = {"\226\134\145\226\134\147", "Scroll"}
+    local hints = {
+        {"A", "Run", theme.btn_a},
+        {"Y", "Ctrl+C", theme.btn_y},
+        {"L2/R2", "Options", theme.btn_l},
+        {"B", "Back", theme.btn_b},
+        {"L1/R1", "Session", theme.btn_l},
+        {"\226\134\145\226\134\147", "Scroll"},
+    }
 
     return hints
 end
@@ -319,93 +284,33 @@ function M.on_input(state, button, action)
     local stype = session.session_type
     local status = session.status
 
-    if stype == "claude_code" then
-        return handle_claude(state, button, session, sid, status)
-    elseif stype == "interactive_prompt" then
-        return handle_interactive(button, sid)
-    elseif stype == "running_process" then
-        return handle_running(button, sid)
-    else
-        return handle_idle(state, button, session, sid)
-    end
-end
-
-function handle_claude(state, button, session, sid, status)
-    if status == "waiting" then
-        if button == "dpad_up" then
-            state.option_index = math.max(1, state.option_index - 1)
-        elseif button == "dpad_down" then
-            local options = session.response_options or {}
-            local choices = session.detected_choices or {}
-            local n = #options + #choices
-            state.option_index = math.min(math.max(1, n), state.option_index + 1)
-        elseif button == "a" then
-            local opt = get_selected_option(state, session)
-            if opt then
-                if opt.kind == "choice" then
-                    return {action = "send_keys", session_id = sid, payload = {keys = opt.key_sequence}}
-                else
-                    return {action = "send_response", session_id = sid, payload = {text = opt.text}}
-                end
-            end
-        elseif button == "y" then
-            return {action = "accept_ghost", session_id = sid}
-        elseif button == "b" then
-            return {action = "escape", session_id = sid}
-        end
-    elseif status == "thinking" then
-        if button == "b" then
-            return {action = "interrupt", session_id = sid}
-        end
-    end
-    return nil
-end
-
-function handle_interactive(button, sid)
-    if button == "a" then
-        return {action = "send_keys", session_id = sid, payload = {keys = "Enter"}}
-    elseif button == "b" then
-        return {action = "interrupt", session_id = sid}
-    elseif button == "y" then
-        return {action = "send_keys", session_id = sid, payload = {keys = "y"}}
-    elseif button == "x" then
-        return {action = "send_keys", session_id = sid, payload = {keys = "n"}}
-    elseif button == "dpad_up" then
-        return {action = "send_keys", session_id = sid, payload = {keys = "Up"}}
-    elseif button == "dpad_down" then
-        return {action = "send_keys", session_id = sid, payload = {keys = "Down"}}
-    end
-    return nil
-end
-
-function handle_running(button, sid)
-    if button == "b" then
-        return {action = "interrupt", session_id = sid}
-    elseif button == "y" then
-        return {action = "suspend", session_id = sid}
-    end
-    return nil
-end
-
-function handle_idle(state, button, session, sid)
-    if button == "a" then
-        local opt = get_selected_option(state, session)
-        if opt then
-            if opt.key_sequence then
-                return {action = "send_keys", session_id = sid, payload = {keys = opt.key_sequence}}
-            elseif opt.text then
-                return {action = "send_response", session_id = sid, payload = {text = opt.text}}
-            end
-        end
-    elseif button == "l2" then
+    -- All session types use the same option selection logic
+    -- L2/R2: cycle options, A: execute selected, Y: interrupt
+    if button == "l2" then
         state.option_index = math.max(1, state.option_index - 1)
+        return nil
     elseif button == "r2" then
         local options = session.response_options or {}
         local choices = session.detected_choices or {}
         local n = math.max(1, #options + #choices)
         state.option_index = math.min(n, state.option_index + 1)
+        return nil
+    elseif button == "a" then
+        local opt = get_selected_option(state, session)
+        if opt then
+            if opt.key_sequence then
+                return {action = "send_keys", session_id = sid, payload = {keys = opt.key_sequence}}
+            else
+                return {action = "send_response", session_id = sid, payload = {text = opt.text}}
+            end
+        end
     elseif button == "y" then
         return {action = "interrupt", session_id = sid}
+    elseif button == "x" then
+        -- Quick deny/no for prompts
+        if status == "waiting" then
+            return {action = "send_keys", session_id = sid, payload = {keys = "C-c"}}
+        end
     end
     return nil
 end
