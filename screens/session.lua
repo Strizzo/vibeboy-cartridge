@@ -64,7 +64,7 @@ end
 
 local function draw_terminal(session, state)
     local term_y = 68
-    local term_h = 412  -- 68 to 480
+    local term_h = 392  -- 68 to 460
     local lines = session.screen_content or {}
     local n = #lines
 
@@ -109,16 +109,11 @@ local function draw_terminal(session, state)
 end
 
 -- ── Options Area ────────────────────────────────────────────────────────────
+-- Shows one suggestion at a time as a card. L2/R2 to navigate.
 
-local function draw_options(session, state)
-    local opts_y = 480
-    local opts_h = 160  -- 480 to 640
+local function build_options(session)
     local options = session.response_options or {}
     local choices = session.detected_choices or {}
-
-    screen.draw_line(0, opts_y, 720, opts_y, {color = theme.border})
-
-    -- Build options from daemon-provided response_options
     local all_opts = {}
     for _, o in ipairs(options) do
         all_opts[#all_opts + 1] = {
@@ -136,74 +131,81 @@ local function draw_options(session, state)
             key_sequence = c.key_sequence or c.keys,
         }
     end
-
-    -- Fallback if daemon provides nothing
     if #all_opts == 0 then
-        all_opts = {
-            {text = "Interrupt (Ctrl+C)", category = "danger", kind = "keys", key_sequence = "C-c"},
+        all_opts[1] = {
+            text = "Interrupt (Ctrl+C)",
+            category = "danger",
+            kind = "keys",
+            key_sequence = "C-c",
         }
     end
+    return all_opts
+end
 
+local function draw_options(session, state)
+    local opts_y = 460
+    local opts_h = 200  -- 460 to 660
+    local W = 720
+
+    screen.draw_line(0, opts_y, W, opts_y, {color = theme.border})
+
+    local all_opts = build_options(session)
     local n = #all_opts
-    if n == 0 then
-        local msg = "No options"
-        local mw = screen.get_text_width(msg, 12, false)
-        screen.draw_text(msg, (720 - mw) / 2, opts_y + opts_h / 2 - 6, {color = theme.text_dim, size = 12})
-        return
-    end
-
-    local row_h = 28
-    local visible = math.max(1, math.floor(opts_h / row_h))
     state.option_index = math.max(1, math.min(state.option_index, n))
+    local opt = all_opts[state.option_index]
 
-    local start_idx
-    if n <= visible then
-        start_idx = 1
-    else
-        start_idx = math.max(1, math.min(state.option_index - 1, n - visible + 1))
-    end
-    local end_idx = math.min(start_idx + visible - 1, n)
+    -- Card container
+    local card_x = 10
+    local card_y = opts_y + 8
+    local card_w = W - 20
+    local card_h = opts_h - 16
+    screen.draw_card(card_x, card_y, card_w, card_h, {
+        bg = theme.card_bg,
+        border = theme.card_border,
+        radius = 8,
+        shadow = false,
+    })
 
-    local y = opts_y + 4
-    for idx = start_idx, end_idx do
-        local opt = all_opts[idx]
-        local is_selected = (idx == state.option_index)
+    -- Header row: category pill + page indicator
+    local header_y = card_y + 8
+    local pw = ui.draw_category_pill(opt.category, card_x + 10, header_y)
 
-        if is_selected then
-            screen.draw_rect(4, y, 712, row_h - 2, {color = theme.card_highlight, filled = true, radius = 4})
-        end
+    local page_text = string.format("%d / %d", state.option_index, n)
+    local ptw = screen.get_text_width(page_text, 12, true)
+    screen.draw_text(page_text, card_x + card_w - ptw - 12, header_y + 1, {
+        color = theme.text_dim, size = 12, bold = true,
+    })
 
-        local x = 10
-        -- Category pill
-        local pw = ui.draw_category_pill(opt.category, x, y + 4)
-        x = x + pw + 6
+    -- Suggestion text wrapped across multiple lines
+    local text_x = card_x + 14
+    local text_y = header_y + 28
+    local text_max_w = card_w - 28
+    local size = 14
+    local lh = screen.get_line_height(size, true)
+    local lines = ui.word_wrap(opt.text or "", text_max_w, size, true)
 
-        -- Cursor indicator
-        if is_selected then
-            screen.draw_text("\226\150\182", x - 2, y + 4, {color = theme.accent, size = 12})
-        end
-
-        -- Option text
-        local opt_text = opt.text or ""
-        local max_text_w = 700 - x - 10
-        local tw = screen.get_text_width(opt_text, 12, false)
-        if tw > max_text_w then
-            while #opt_text > 1 and screen.get_text_width(opt_text .. "..", 12, false) > max_text_w do
-                opt_text = opt_text:sub(1, -2)
-            end
-            opt_text = opt_text .. ".."
-        end
-        screen.draw_text(opt_text, x + 6, y + 5, {
-            color = is_selected and theme.text or theme.text_dim,
-            size = 12,
+    local max_lines = math.floor((card_h - 50) / lh)
+    for i = 1, math.min(#lines, max_lines) do
+        screen.draw_text(lines[i], text_x, text_y, {
+            color = theme.text, size = size, bold = true,
         })
-
-        y = y + row_h
+        text_y = text_y + lh
+    end
+    -- Show ellipsis if truncated
+    if #lines > max_lines then
+        screen.draw_text("...", text_x, text_y, {color = theme.text_dim, size = size})
     end
 
-    -- Scroll indicator for options
-    if n > visible then
-        ui.draw_scroll_indicator(opts_y, opts_h, state.option_index, n, visible)
+    -- Page navigation hints inside the card (bottom)
+    local hint_y = card_y + card_h - 20
+    if n > 1 then
+        local left_hint = state.option_index > 1 and "< L2  " or ""
+        local right_hint = state.option_index < n and "  R2 >" or ""
+        local nav = left_hint .. string.format("%d/%d", state.option_index, n) .. right_hint
+        local nw = screen.get_text_width(nav, 11, false)
+        screen.draw_text(nav, card_x + (card_w - nw) / 2, hint_y, {
+            color = theme.text_dim, size = 11,
+        })
     end
 end
 
