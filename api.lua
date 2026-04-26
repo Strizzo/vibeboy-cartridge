@@ -2,7 +2,7 @@
 
 local M = {}
 
---- Poll full state from daemon.
+--- Poll full state from daemon (synchronous — blocks UI; use poll_state_async).
 -- @param host string  e.g. "192.168.1.100"
 -- @param port number  e.g. 8766
 -- @return table|nil   parsed state table, or nil on error
@@ -23,7 +23,36 @@ function M.poll_state(host, port)
     return data, nil
 end
 
---- Send an action to the daemon.
+--- Start an async poll. Returns a request id that should be matched against
+-- http.poll() results.
+function M.poll_state_async(host, port)
+    local url = "http://" .. host .. ":" .. tostring(port) .. "/api/state"
+    return http.get_async(url)
+end
+
+--- Drain pending async responses; returns parsed state for any state poll
+-- request whose id matches `state_request_id`. Returns nil if not ready.
+-- For other request types, results are dropped — callers should track ids.
+function M.drain_responses()
+    if not http.poll then return {} end
+    local raw = http.poll()
+    return raw or {}
+end
+
+--- Parse a poll response body into a state table.
+-- @return table|nil, string|nil  state, error
+function M.parse_state(resp)
+    if not resp.ok then
+        return nil, "HTTP " .. tostring(resp.status or "error")
+    end
+    local dok, data = pcall(json.decode, resp.body)
+    if not dok or not data then
+        return nil, "Invalid JSON"
+    end
+    return data, nil
+end
+
+--- Send an action to the daemon (synchronous; small request, returns quickly).
 -- @param host    string
 -- @param port    number
 -- @param action  string   e.g. "send_response", "interrupt"
@@ -38,6 +67,11 @@ function M.send_action(host, port, action, session_id, payload)
         session_id = session_id,
         payload = payload or {},
     })
+    -- Prefer async post if available, fall back to sync
+    if http.post_async then
+        http.post_async(url, body)
+        return true, nil  -- fire-and-forget; render thread isn't blocked
+    end
     local ok, resp = pcall(http.post, url, body)
     if not ok then
         return false, "Connection failed"

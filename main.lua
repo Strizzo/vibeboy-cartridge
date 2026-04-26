@@ -34,6 +34,8 @@ local state = {
     poll_interval = 1.0,
     fail_count = 0,
     max_failures = 3,
+    poll_in_flight = false,
+    poll_request_id = nil,
 
     -- Dashboard
     sessions = {},           -- sorted list of session data
@@ -201,21 +203,56 @@ local function close_tunnel()
     end
 end
 
-local function do_poll()
-    local data, err = api.poll_state(api_host(), api_port())
-    if data then
-        state.connected = true
-        state.fail_count = 0
-        update_sessions(data)
-    else
-        state.fail_count = state.fail_count + 1
-        if state.fail_count >= state.max_failures then
-            state.connected = false
-            state.connect_error = err or "Connection lost"
-            close_tunnel()
-            state.screen = "connect"
+-- Trigger an async poll. Result is processed in process_poll_responses().
+local function do_poll_async()
+    if state.poll_in_flight then return end -- one in-flight at a time
+    if not http.get_async then
+        -- Fallback to sync poll if async API not available
+        local data, err = api.poll_state(api_host(), api_port())
+        if data then
+            state.connected = true
             state.fail_count = 0
+            update_sessions(data)
+        else
+            state.fail_count = state.fail_count + 1
+            if state.fail_count >= state.max_failures then
+                state.connected = false
+                state.connect_error = err or "Connection lost"
+                close_tunnel()
+                state.screen = "connect"
+                state.fail_count = 0
+            end
         end
+        return
+    end
+    state.poll_request_id = api.poll_state_async(api_host(), api_port())
+    state.poll_in_flight = true
+end
+
+-- Drain async HTTP responses and update state for any matching poll request.
+local function process_async_responses()
+    if not http.poll then return end
+    local responses = http.poll()
+    for _, resp in ipairs(responses) do
+        if resp.id == state.poll_request_id then
+            state.poll_in_flight = false
+            local data, err = api.parse_state(resp)
+            if data then
+                state.connected = true
+                state.fail_count = 0
+                update_sessions(data)
+            else
+                state.fail_count = state.fail_count + 1
+                if state.fail_count >= state.max_failures then
+                    state.connected = false
+                    state.connect_error = err or "Connection lost"
+                    close_tunnel()
+                    state.screen = "connect"
+                    state.fail_count = 0
+                end
+            end
+        end
+        -- Other request ids (action posts) are fire-and-forget.
     end
 end
 
@@ -287,17 +324,20 @@ function on_update(dt)
         state.force_poll = true
     end
 
+    -- Drain any completed async HTTP responses (cheap, non-blocking)
+    process_async_responses()
+
     -- Polling (only when connected and on dashboard/session)
     if state.connected and (state.screen == "dashboard" or state.screen == "session") then
         if state.force_poll then
             state.force_poll = false
             state.poll_timer = 0
-            do_poll()
+            do_poll_async()
         else
             state.poll_timer = state.poll_timer + dt
             if state.poll_timer >= state.poll_interval then
                 state.poll_timer = 0
-                do_poll()
+                do_poll_async()
             end
         end
     end
