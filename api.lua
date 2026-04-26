@@ -24,9 +24,13 @@ function M.poll_state(host, port)
 end
 
 --- Start an async poll. Returns a request id that should be matched against
--- http.poll() results.
-function M.poll_state_async(host, port)
+-- http.poll() results. If `etag` is provided, sends If-None-Match so the
+-- daemon can return 304 when nothing changed (saves JSON decode + network).
+function M.poll_state_async(host, port, etag)
     local url = "http://" .. host .. ":" .. tostring(port) .. "/api/state"
+    if etag then
+        return http.get_async(url, etag)
+    end
     return http.get_async(url)
 end
 

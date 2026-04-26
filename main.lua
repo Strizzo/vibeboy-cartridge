@@ -36,6 +36,7 @@ local state = {
     max_failures = 3,
     poll_in_flight = false,
     poll_request_id = nil,
+    last_etag = nil,
 
     -- Dashboard
     sessions = {},           -- sorted list of session data
@@ -225,7 +226,7 @@ local function do_poll_async()
         end
         return
     end
-    state.poll_request_id = api.poll_state_async(api_host(), api_port())
+    state.poll_request_id = api.poll_state_async(api_host(), api_port(), state.last_etag)
     state.poll_in_flight = true
 end
 
@@ -236,19 +237,27 @@ local function process_async_responses()
     for _, resp in ipairs(responses) do
         if resp.id == state.poll_request_id then
             state.poll_in_flight = false
-            local data, err = api.parse_state(resp)
-            if data then
+            -- 304 Not Modified: keep our cached state; just refresh the etag.
+            if resp.status == 304 then
                 state.connected = true
                 state.fail_count = 0
-                update_sessions(data)
+                if resp.etag then state.last_etag = resp.etag end
             else
-                state.fail_count = state.fail_count + 1
-                if state.fail_count >= state.max_failures then
-                    state.connected = false
-                    state.connect_error = err or "Connection lost"
-                    close_tunnel()
-                    state.screen = "connect"
+                local data, err = api.parse_state(resp)
+                if data then
+                    state.connected = true
                     state.fail_count = 0
+                    update_sessions(data)
+                    if resp.etag then state.last_etag = resp.etag end
+                else
+                    state.fail_count = state.fail_count + 1
+                    if state.fail_count >= state.max_failures then
+                        state.connected = false
+                        state.connect_error = err or "Connection lost"
+                        close_tunnel()
+                        state.screen = "connect"
+                        state.fail_count = 0
+                    end
                 end
             end
         end
@@ -259,6 +268,7 @@ end
 local function do_connect()
     state.connecting = true
     state.connect_error = ""
+    state.last_etag = nil  -- force a full state response on reconnect
 
     -- Open SSH tunnel if enabled
     if state.ssh_enabled then
