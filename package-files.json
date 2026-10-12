@@ -1,0 +1,11 @@
+[
+  "api.lua",
+  "cartridge.json",
+  "icon.png",
+  "icon_focused.png",
+  "main.lua",
+  "screens/connect.lua",
+  "screens/dashboard.lua",
+  "screens/session.lua",
+  "ui.lua"
+]

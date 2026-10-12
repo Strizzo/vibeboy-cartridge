@@ -1,23 +1,31 @@
-name: Release
-
+name: Validate and release
 on:
+  pull_request:
   push:
-    tags:
-      - 'v*'
-
+    branches: [main]
+    tags: ['v*']
+permissions:
+  contents: write
 jobs:
   package:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Package cartridge
+      - name: Install Lua syntax checker
+        run: sudo apt-get update -qq && sudo apt-get install -y lua5.4
+      - name: Check Lua and release contract
         run: |
-          tar czf dev.cartridge.vibeboy.tar.gz \
-            cartridge.json main.lua api.lua ui.lua \
-            screens/ icon.png
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+          find . -type f -name '*.lua' -not -path './.git/*' -exec luac5.4 -p {} \;
+          lua5.4 tests/run.lua
+          python3 -m unittest discover -s tests -p 'test_*.py'
+          python3 tools/package.py --check
+      - name: Build versioned package
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 tools/package.py --tag "$GITHUB_REF_NAME"
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: dev.cartridge.vibeboy.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/release.json
+            dist/SHA256SUMS

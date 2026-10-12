@@ -1,6 +1,6 @@
 # VibeBoy
 
-A [CartridgeOS](https://github.com/Strizzo/Cartridge) app for managing tmux sessions on a remote server from your handheld. Perfect for monitoring Claude Code, long-running builds, or any terminal workflow from your cyberdeck.
+A [CartridgeOS](https://github.com/Strizzo/Cartridge) app for managing tmux sessions on a remote server from your handheld. Perfect for monitoring Claude Code, long-running builds, or any terminal workflow from your handheld remote panel.
 
 ## How It Works
 
@@ -60,8 +60,8 @@ Once connected, your server is saved. Next time just press **A**.
 | D-pad | Cycle servers or adjust values |
 | X | Enter new IP (in server field) / Confirm IP (in IP editor) |
 | Y | Toggle SSH tunnel |
-| A | Connect |
-| B | Exit edit mode |
+| A | Connect outside edit mode; +10 to the selected IP octet inside the IP editor |
+| B | Exit edit mode / cancel a pending connection |
 
 ### Dashboard
 
@@ -69,19 +69,38 @@ Once connected, your server is saved. Next time just press **A**.
 |--------|--------|
 | D-pad | Select session |
 | A | Open session |
-| L1/R1 | Switch between sessions |
-| B | Back to connect screen |
+| X | Refresh session list |
+| L2/R2 | Page through sessions |
+| B | Disconnect and return to connection settings |
 
 ### Session View
 
 | Button | Action |
 |--------|--------|
 | D-pad Up/Down | Scroll terminal output |
-| D-pad Left/Right | Cycle actions (send command, interrupt, etc.) |
+| L2/R2 | Cycle response options and detected choices |
 | A | Execute selected action |
 | L1/R1 | Switch to prev/next session |
-| B | Back to dashboard |
+| B / SELECT | Back to dashboard |
+| Y | Interrupt (Ctrl+C) |
+| X | Quick deny (Ctrl+C) while waiting |
+
+## Public UI and validation
+
+Requires the runtime's `ui.public` components. The connection form, session dashboard and terminal use a 720 px layout with large labels and explicit focus. Requires runtime 0.7.0. SSH tunnel creation uses `ssh.tunnel_async` and `ssh.poll`; HTTP starts after the tunnel succeeds. B, editing fields, toggling SSH, or disconnecting cancels a pending connection and ignores late results. The SSH key directory remains `/roms/Cartridge/ssh`. Initial HTTP connection and polling are asynchronous; action responses report failures.
+
+The displayed response and A-button payload share one option list, including supplied key sequences and the fallback interrupt. Session identity is retained when daemon updates reorder the dashboard. No sample sessions are included in the app.
+
+Controller capture scenarios: fresh setup; START/X IP editing; Y/START SSH-user field; connected empty dashboard; populated dashboard with D-pad and L2/R2; A terminal; L2/R2 response selection; D-pad scrollback; L1/R1 session switching; B/SELECT return; failed connection; pending SSH cancellation and late SSH/HTTP results. Validation uses in-memory SSH/HTTP mocks and local fixtures, with action sends disabled. The scoped regression checks are in `tests/regression.lua`; run them as the entry in a scratch copy without changing the production manifest.
 
 ## License
 
 MIT
+
+## Public app refresh
+
+Requires **CartridgeOS 0.7.0 or newer**. The display uses the CartridgeOS app components at 720×720, larger type and flat graphite/paper panels. Controls remain usable while requests are pending; idle screens do not continuously animate.
+
+Install or update from the signed CartridgeOS Store after updating the runtime. Source releases are also available in this repository's GitHub Releases. Preferences remain under the same app data keys.
+
+SSH connection opens run on a worker. B or connection-setting edits cancel a pending connection, and late results cannot retarget the panel. The server daemon and a matching SSH key are still required. Headless checks use mocked SSH and do not send actions to real sessions.

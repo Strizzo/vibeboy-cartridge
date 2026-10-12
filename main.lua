@@ -1,6 +1,8 @@
 -- VibeBoy Cartridge — Remote control for VibeBoy daemon
 -- Manages tmux sessions and Claude Code via HTTP API
 
+local U = _G.ui.public
+local C = U.C
 local api = require("api")
 local ui = require("ui")
 local connect_screen = require("screens.connect")
@@ -27,6 +29,9 @@ local state = {
     ssh_enabled = false,
     ssh_user = "",  -- empty = auto (let SSH config decide)
     ssh_active = false,
+    ssh_request_id = nil,
+    ssh_timer = 0,
+    connect_phase = "",
     local_port = nil,
 
     -- Polling
@@ -36,6 +41,7 @@ local state = {
     max_failures = 3,
     poll_in_flight = false,
     poll_request_id = nil,
+    action_request_id = nil,
     last_etag = nil,
 
     -- Dashboard
@@ -144,12 +150,17 @@ local function update_sessions(data)
     state.sessions = list
     state.session_ids = ids
 
-    -- Update current session if viewing one
-    if state.screen == "session" and state.session_index >= 1 and state.session_index <= #ids then
-        local current_sid = ids[state.session_index]
-        state.current_session = sessions_map[current_sid]
-        if state.current_session then
-            state.current_session.session_id = current_sid
+    state.dashboard_cursor = math.max(1, math.min(state.dashboard_cursor, #list))
+    -- Keep the chosen session identity stable when waiting sessions reorder.
+    if state.screen == "session" then
+        local sid = state.current_session and state.current_session.session_id
+        state.current_session = nil
+        for index, session in ipairs(list) do
+            if session.session_id == sid then
+                state.current_session = session
+                state.session_index = index
+                break
+            end
         end
     end
 end
@@ -197,111 +208,162 @@ local function api_port()
 end
 
 local function close_tunnel()
-    if state.ssh_active then
-        ssh.close()
-        state.ssh_active = false
-        state.local_port = nil
+    -- SDK close cancels a pending worker and closes any active tunnel.
+    ssh.close()
+    state.ssh_request_id = nil
+    state.ssh_active = false
+    state.local_port = nil
+end
+
+local function cancel_connection()
+    close_tunnel()
+    state.connected = false
+    state.connecting = false
+    state.connect_phase = ""
+    state.connect_error = ""
+    state.needs_initial_connect = false
+    state.ready_to_connect = false
+    -- Results from cancelled SSH/HTTP requests cannot reopen the old endpoint.
+    state.poll_request_id = nil
+    state.poll_in_flight = false
+    state.action_request_id = nil
+    state.pending_action = nil
+    state.last_etag = nil
+    state.force_poll = false
+end
+
+local function poll_success(data)
+    state.connected = true
+    state.fail_count = 0
+    if data then update_sessions(data) end
+    if state.connecting then
+        state.connecting = false
+        state.connect_phase = ""
+        save_settings()
+        state.screen = "dashboard"
+        state.dashboard_cursor = 1
     end
 end
 
--- Trigger an async poll. Result is processed in process_poll_responses().
-local function do_poll_async()
-    if state.poll_in_flight then return end -- one in-flight at a time
-    if not http.get_async then
-        -- Fallback to sync poll if async API not available
-        local data, err = api.poll_state(api_host(), api_port())
-        if data then
-            state.connected = true
-            state.fail_count = 0
-            update_sessions(data)
-        else
-            state.fail_count = state.fail_count + 1
-            if state.fail_count >= state.max_failures then
-                state.connected = false
-                state.connect_error = err or "Connection lost"
-                close_tunnel()
-                state.screen = "connect"
-                state.fail_count = 0
-            end
-        end
+local function poll_error(err)
+    if state.connecting then
+        state.connecting = false
+        state.connected = false
+        state.connect_error = err or "Connection failed"
+        close_tunnel()
         return
     end
-    state.poll_request_id = api.poll_state_async(api_host(), api_port(), state.last_etag)
+    state.fail_count = state.fail_count + 1
+    if state.fail_count >= state.max_failures then
+        state.connected = false
+        state.connect_error = err or "Connection lost"
+        close_tunnel()
+        state.screen = "connect"
+        state.fail_count = 0
+    end
+end
+
+local function do_poll_async()
+    if state.poll_in_flight then return end
+    if not http.get_async then
+        poll_error("Async HTTP unavailable")
+        return
+    end
+    local ok, id = pcall(api.poll_state_async, api_host(), api_port(), state.last_etag)
+    if not ok or not id then poll_error("Could not start state request"); return end
+    state.poll_request_id = id
     state.poll_in_flight = true
 end
 
--- Drain async HTTP responses and update state for any matching poll request.
 local function process_async_responses()
-    if not http.poll then return end
-    local responses = http.poll()
-    for _, resp in ipairs(responses) do
-        if resp.id == state.poll_request_id then
+    if not http.poll then return false end
+    local changed = false
+    for _, resp in ipairs(http.poll() or {}) do
+        if state.poll_request_id and resp.id == state.poll_request_id then
+            changed = true
             state.poll_in_flight = false
-            -- 304 Not Modified: keep our cached state; just refresh the etag.
+            state.poll_request_id = nil
             if resp.status == 304 then
-                state.connected = true
-                state.fail_count = 0
+                poll_success()
                 if resp.etag then state.last_etag = resp.etag end
             else
-                local data, err = api.parse_state(resp)
-                if data then
-                    state.connected = true
-                    state.fail_count = 0
-                    update_sessions(data)
+                local value, err = api.parse_state(resp)
+                if value then
+                    poll_success(value)
                     if resp.etag then state.last_etag = resp.etag end
-                else
-                    state.fail_count = state.fail_count + 1
-                    if state.fail_count >= state.max_failures then
-                        state.connected = false
-                        state.connect_error = err or "Connection lost"
-                        close_tunnel()
-                        state.screen = "connect"
-                        state.fail_count = 0
-                    end
-                end
+                else poll_error(err) end
+            end
+        elseif state.action_request_id and resp.id == state.action_request_id then
+            changed = true
+            state.action_request_id = nil
+            if resp.ok then state.connect_error = ""
+            else state.connect_error = "Action failed: HTTP " .. tostring(resp.status or "error") end
+            state.force_poll = true
+        end
+    end
+    return changed
+end
+
+local function process_ssh_responses()
+    if not ssh.poll then return false end
+    local ok, responses = pcall(ssh.poll)
+    if not ok then
+        if state.ssh_request_id then
+            cancel_connection()
+            state.connect_error = "Could not read SSH result"
+            return true
+        end
+        return false
+    end
+    local changed = false
+    for _, result in ipairs(responses or {}) do
+        if state.ssh_request_id and result.id == state.ssh_request_id then
+            state.ssh_request_id = nil
+            changed = true
+            local port = tonumber(result.local_port)
+            if result.ok and port and port >= 1 and port <= 65535 and port == math.floor(port) then
+                state.ssh_active = true
+                state.local_port = port
+                state.connect_phase = "Contacting daemon..."
+                do_poll_async()
+            else
+                cancel_connection()
+                state.connect_error = result.error or "SSH tunnel failed"
             end
         end
-        -- Other request ids (action posts) are fire-and-forget.
     end
+    return changed
 end
 
 local function do_connect()
+    if state.connecting or state.poll_in_flight then return end
     state.connecting = true
     state.connect_error = ""
-    state.last_etag = nil  -- force a full state response on reconnect
-
-    -- Open SSH tunnel if enabled
+    state.last_etag = nil
+    state.ssh_timer = 0
     if state.ssh_enabled then
-        local result = ssh.tunnel({
+        if not ssh.tunnel_async or not ssh.poll then
+            state.connecting = false
+            state.connect_error = "Async SSH requires runtime 0.7.0"
+            return
+        end
+        state.connect_phase = "Opening SSH tunnel..."
+        local ok, id = pcall(ssh.tunnel_async, {
             host = state.host,
             user = state.ssh_user,
             key_dir = SSH_KEY_DIR,
             remote_port = state.port,
         })
-        if not result.ok then
-            state.connecting = false
-            state.connect_error = result.error or "SSH tunnel failed"
+        if not ok or not id then
+            cancel_connection()
+            state.connect_error = "Could not start SSH tunnel"
             return
         end
-        state.ssh_active = true
-        state.local_port = result.local_port
+        state.ssh_request_id = id
+        return
     end
-
-    local data, err = api.poll_state(api_host(), api_port())
-    if data then
-        state.connected = true
-        state.connecting = false
-        state.fail_count = 0
-        save_settings()
-        update_sessions(data)
-        state.screen = "dashboard"
-        state.dashboard_cursor = 1
-    else
-        state.connected = false
-        state.connecting = false
-        state.connect_error = err or "Connection failed"
-        close_tunnel()
-    end
+    state.connect_phase = "Contacting daemon..."
+    do_poll_async()
 end
 
 -- ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -320,22 +382,32 @@ function on_update(dt)
     if state.ready_to_connect then
         state.ready_to_connect = false
         do_connect()
-        return
+        return true
+    end
+
+    local dirty = process_ssh_responses()
+    if state.ssh_request_id then
+        state.ssh_timer = state.ssh_timer + dt
+        if state.ssh_timer >= 30 then
+            cancel_connection()
+            state.connect_error = "SSH connection timed out"
+            dirty = true
+        end
     end
 
     -- Send pending action
     if state.pending_action then
         local act = state.pending_action
         state.pending_action = nil
-        local ok, err = api.send_action(api_host(), api_port(), act.action, act.session_id, act.payload)
-        if not ok then
-            state.connect_error = err or "Action failed"
-        end
-        state.force_poll = true
+        local ok, err, id = api.send_action(api_host(), api_port(), act.action, act.session_id, act.payload)
+        if not ok then state.connect_error = err or "Action failed" end
+        state.action_request_id = id
+        state.force_poll = not id
+        dirty = true
     end
 
     -- Drain any completed async HTTP responses (cheap, non-blocking)
-    process_async_responses()
+    dirty = process_async_responses() or dirty
 
     -- Polling (only when connected and on dashboard/session)
     if state.connected and (state.screen == "dashboard" or state.screen == "session") then
@@ -351,6 +423,7 @@ function on_update(dt)
             end
         end
     end
+    return dirty
 end
 
 function on_input(button, action)
@@ -363,8 +436,15 @@ function on_input(button, action)
     end
 
     if state.screen == "connect" then
+        if action == "press" or action == "repeat" then
+            local pending = state.connecting or state.needs_initial_connect or state.ready_to_connect
+            if pending and button == "b" then cancel_connection(); return end
+            if pending and (button == "start" or button == "y" or state.edit_field) then
+                cancel_connection()
+            end
+        end
         local result = connect_screen.on_input(state, button, action)
-        if result == "connect" then
+        if result == "connect" and not state.connecting then
             state.needs_initial_connect = true
         end
 
@@ -374,6 +454,9 @@ function on_input(button, action)
             open_session(state.dashboard_cursor)
         elseif result == "refresh" then
             state.force_poll = true
+        elseif result == "disconnect" then
+            cancel_connection()
+            state.screen = "connect"
         end
 
     elseif state.screen == "session" then
@@ -385,71 +468,34 @@ function on_input(button, action)
         elseif result == "next_session" then
             switch_session(1)
         elseif type(result) == "table" and result.action then
-            state.pending_action = result
+            if not state.action_request_id and not state.pending_action then
+                state.connect_error = ""
+                state.pending_action = result
+            end
         end
     end
 end
 
 local function draw_help()
-    local W, H = 720, 720
-    -- Dim background
-    screen.draw_rect(0, 0, W, H, {color = {10, 10, 15}, filled = true})
-
-    local cx = W / 2
-    local y = 60
-
-    -- Title
-    local title = "VibeBoy Setup"
-    local tw = screen.get_text_width(title, 22, true)
-    screen.draw_text(title, (W - tw) / 2, y, {color = theme.accent, size = 22, bold = true})
-    y = y + 40
-
-    -- Description
-    local lines = {
-        "VibeBoy lets you manage tmux sessions on a",
-        "remote server from your handheld.",
-        "",
-        "Before you start, you need:",
-        "",
-        "1. vibeboy-daemon running on your server",
-        "   github.com/Strizzo/vibeboy-daemon",
-        "",
-        "2. Your SSH key on the SD card at:",
-        "   Cartridge/ssh/id_ed25519",
-        "",
-        "Then in this app:",
-        "",
-        "  START    Edit connection settings",
-        "  X        Enter a new server IP",
-        "  Y        Enable SSH tunnel",
-        "  START    Switch between fields",
-        "  A        Connect",
-        "",
-        "The daemon listens on port 8766 by default.",
-        "SSH tunneling keeps the connection secure.",
+    U.header("VibeBoy", "REMOTE PANEL / SETUP", "First launch", C.muted)
+    U.display("Your server, in hand.", 24, 126, 36, C.paper, 672)
+    ui.lines("Manage tmux sessions and terminal responses through your VibeBoy daemon.", 24, 181, 672, 18, 2, C.muted)
+    local steps = {
+        {"01 / RUN THE DAEMON", "Install vibeboy-daemon on your server. Default port: 8766.", "github.com/Strizzo/vibeboy-daemon"},
+        {"02 / COPY YOUR SSH KEY", "Place your private key on the SD card:", "Cartridge/ssh/id_ed25519"},
+        {"03 / SET YOUR CONNECTION", "START edits fields. X enters an IP. Y enables SSH.", "B finishes editing. A connects to your server."},
     }
-
-    for _, line in ipairs(lines) do
-        local color = theme.text_dim
-        if line:match("^%d%.") then
-            color = theme.text
-        elseif line:match("^  %u") then
-            color = theme.accent
-        end
-        screen.draw_text(line, 80, y, {color = color, size = 14, max_width = 560})
-        y = y + 22
+    for i, step in ipairs(steps) do
+        local y = 254 + (i - 1) * 124
+        U.panel(24, y, 672, 112, C.panel, i == 1 and C.red or C.line)
+        U.text(step[1], 40, y + 12, 14, C.muted, 632, true)
+        U.text(step[2], 40, y + 40, 16, C.paper, 632)
+        U.text(step[3], 40, y + 72, 16, C.muted, 632)
     end
-
-    -- Footer
-    y = H - 50
-    local hint = "Press any button to continue"
-    local hw = screen.get_text_width(hint, 14, false)
-    screen.draw_text(hint, (W - hw) / 2, y, {color = theme.text_dim, size = 14})
+    U.footer({{"ANY", "Continue"}})
 end
 
 function on_render()
-    screen.clear(theme.bg.r, theme.bg.g, theme.bg.b)
-
     -- Deferred connect: trigger on first render frame
     if state.needs_initial_connect then
         state.needs_initial_connect = false

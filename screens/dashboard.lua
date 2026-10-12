@@ -1,11 +1,13 @@
 -- screens/dashboard.lua — Session list overview
 
+local U = _G.ui.public
+local C = U.C
 local ui = require("ui")
 
 local M = {}
 
-local ROW_HEIGHT = 56
-local CARD_RADIUS = 6
+local ROW_HEIGHT = 72
+local VISIBLE = 5
 
 --- Sort sessions: waiting first, then alphabetical by name.
 local function sort_sessions(sessions)
@@ -19,99 +21,44 @@ local function sort_sessions(sessions)
     end)
 end
 
---- Draw a single session card.
-local function draw_session_card(session, y, is_selected, card_x, card_w)
-    local card_h = ROW_HEIGHT - 4
-
-    if is_selected then
-        screen.draw_card(card_x, y, card_w, card_h, {
-            bg = theme.card_highlight, border = theme.accent, radius = CARD_RADIUS,
-        })
-    else
-        screen.draw_card(card_x, y, card_w, card_h, {
-            bg = theme.card_bg, radius = CARD_RADIUS,
-        })
-    end
-
-    -- Type pill
-    local px = card_x + 10
-    local pill_w = ui.draw_type_pill(session.session_type, px, y + 8)
-
-    -- Session name
-    local name_x = px + pill_w + 8
-    local name = (session.session_name or "unknown"):gsub("[\128-\255]", "?")
-    local max_name_w = card_w - pill_w - 120
-    local nw = screen.get_text_width(name, 14, is_selected)
-    if nw > max_name_w then
-        while #name > 1 and screen.get_text_width(name .. "..", 14, is_selected) > max_name_w do
-            name = name:sub(1, -2)
-        end
-        name = name .. ".."
-    end
-    screen.draw_text(name, name_x, y + 6, {color = theme.text, size = 14, bold = is_selected})
-
-    -- Command (second line)
-    local cmd = session.pane_command or ""
-    if cmd ~= "" then
-        local cmd_max_w = card_w - pill_w - 120
-        local cw = screen.get_text_width(cmd, 11, false)
-        if cw > cmd_max_w then
-            while #cmd > 1 and screen.get_text_width(cmd .. "..", 11, false) > cmd_max_w do
-                cmd = cmd:sub(1, -2)
-            end
-            cmd = cmd .. ".."
-        end
-        screen.draw_text(cmd, name_x, y + 26, {color = theme.text_dim, size = 11})
-    end
-
-    -- Status pill (right side)
-    local status = session.status or (session.attached and "attached" or "idle")
-    ui.draw_status_pill(status, card_x + card_w - 70, y + 14, status)
-end
-
---- Draw the dashboard screen.
+--- Draw the remote session dashboard.
 function M.draw(state)
     local sessions = state.sessions or {}
-    local n = #sessions
-
-    ui.draw_header("VIBEBOY", n .. " sessions", n > 0 and {100, 220, 100} or theme.text_dim)
-
-    local content_y = 44
-    local footer_y = 684
-    local content_h = footer_y - content_y
-    local card_x = 6
-    local card_w = 708
-
-    if state.loading then
-        ui.draw_loading("Connecting...", content_y, content_h)
-    elseif n == 0 then
-        ui.draw_loading("No sessions found", content_y, content_h)
-    else
-        local visible = math.max(1, math.floor(content_h / ROW_HEIGHT))
-        state.dashboard_cursor = math.max(1, math.min(state.dashboard_cursor, n))
-
-        local start_idx
-        if n <= visible then
-            start_idx = 1
-        else
-            start_idx = math.max(1, math.min(state.dashboard_cursor - 1, n - visible + 1))
-        end
-        local end_idx = math.min(start_idx + visible - 1, n)
-
-        local y = content_y + 2
-        for idx = start_idx, end_idx do
-            draw_session_card(sessions[idx], y, idx == state.dashboard_cursor, card_x, card_w)
-            y = y + ROW_HEIGHT
-        end
-
-        ui.draw_scroll_indicator(content_y, content_h, state.dashboard_cursor, n, visible)
+    local n, waiting = #sessions, 0
+    for _, session in ipairs(sessions) do
+        if session.status == "waiting" then waiting = waiting + 1 end
     end
+    U.header("VibeBoy", "REMOTE PANEL / SESSIONS", state.poll_in_flight and "Updating" or "Connected", C.green)
+    U.metric(24, 112, 214, 108, "Sessions", n, "total", C.teal)
+    U.metric(250, 112, 214, 108, "Waiting", waiting, "input", waiting > 0 and C.gold or C.muted)
+    U.panel(476, 112, 220, 108, C.panel)
+    U.text("CONNECTION", 490, 124, 14, C.muted, 192, true)
+    U.text(state.ssh_active and "SSH tunnel" or "Direct HTTP", 490, 155, 18, C.paper, 192, true)
+    U.text(state.host, 490, 192, 14, C.muted, 192)
+    U.text("Remote sessions", 24, 236, 18, C.paper, 500, true)
+    U.text(n > 0 and string.format("%d / %d", math.min(state.dashboard_cursor, n), n) or "0", 580, 238, 14, C.muted, 116)
 
-    ui.draw_footer({
-        {"\226\134\145\226\134\147", "Navigate", theme.btn_l},
-        {"A", "Open", theme.btn_a},
-        {"X", "Refresh", theme.btn_x},
-    })
+    if n == 0 then
+        U.empty("No sessions", "The daemon returned an empty session list. Start a tmux session on your server, then press X to refresh.", 290)
+    else
+        state.dashboard_cursor = math.max(1, math.min(state.dashboard_cursor, n))
+        local first = math.max(1, math.min(state.dashboard_cursor - VISIBLE + 1, n - VISIBLE + 1))
+        for index = first, math.min(n, first + VISIBLE - 1) do
+            local session, y = sessions[index], 270 + (index - first) * ROW_HEIGHT
+            local selected = index == state.dashboard_cursor
+            local fg, secondary = U.row(24, y, 672, ROW_HEIGHT - 6, selected)
+            U.text(session.session_name or session.session_id, 40, y + 10, 18, fg, 476, true)
+            U.text(ui.type_label(session.session_type) .. " / " .. (session.pane_command or ""),
+                40, y + 39, 14, secondary, 488)
+            U.text(session.status or "idle", 546, y + 24, 14,
+                selected and fg or ui.status_color(session.status), 134, true)
+        end
+        ui.scroll(270, VISIBLE * ROW_HEIGHT - 6, first, n, VISIBLE)
+    end
+    if state.connect_error and state.connect_error ~= "" then
+        U.text(state.connect_error, 24, 648, 14, C.red, 672)
+    end
+    U.footer({{"D-PAD", "Select"}, {"A", "Open"}, {"X", "Refresh"}, {"L2/R2", "Page"}, {"B", "Close"}})
 end
 
 --- Handle input on dashboard screen.
@@ -129,11 +76,13 @@ function M.on_input(state, button, action)
         return "open_session"
     elseif button == "x" then
         return "refresh"
+    elseif button == "b" then
+        return "disconnect"
     elseif button == "l2" then
-        local visible = math.max(1, math.floor(640 / ROW_HEIGHT))
+        local visible = VISIBLE
         state.dashboard_cursor = math.max(1, state.dashboard_cursor - visible)
     elseif button == "r2" then
-        local visible = math.max(1, math.floor(640 / ROW_HEIGHT))
+        local visible = VISIBLE
         state.dashboard_cursor = math.min(math.max(1, n), state.dashboard_cursor + visible)
     end
 
