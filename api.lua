@@ -17,7 +17,7 @@ function M.poll_state(host, port)
         return nil, "HTTP " .. tostring(resp.status or "error")
     end
     local dok, data = pcall(json.decode, resp.body)
-    if not dok or not data then
+    if not dok or type(data) ~= "table" or type(data.sessions) ~= "table" then
         return nil, "Invalid JSON"
     end
     return data, nil
@@ -50,7 +50,7 @@ function M.parse_state(resp)
         return nil, "HTTP " .. tostring(resp.status or "error")
     end
     local dok, data = pcall(json.decode, resp.body)
-    if not dok or not data then
+    if not dok or type(data) ~= "table" or type(data.sessions) ~= "table" then
         return nil, "Invalid JSON"
     end
     return data, nil
@@ -73,8 +73,9 @@ function M.send_action(host, port, action, session_id, payload)
     })
     -- Prefer async post if available, fall back to sync
     if http.post_async then
-        http.post_async(url, body)
-        return true, nil  -- fire-and-forget; render thread isn't blocked
+        local ok, id = pcall(http.post_async, url, body)
+        if not ok or not id then return false, "Could not start action request" end
+        return true, nil, id
     end
     local ok, resp = pcall(http.post, url, body)
     if not ok then

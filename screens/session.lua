@@ -1,115 +1,10 @@
--- screens/session.lua — Main session view (terminal + options + actions)
-
+-- Session terminal and response controls.
+local U = _G.ui.public
+local C = U.C
 local ui = require("ui")
-
 local M = {}
-
 local SCROLL_STEP = 3
-
---- Strip any non-ASCII bytes from a string to prevent UTF-8 errors.
-local function safe_ascii(s)
-    if not s then return "" end
-    return s:gsub("[\128-\255]", "?")
-end
-
--- ── Status Bar ──────────────────────────────────────────────────────────────
-
-local function draw_status_bar(session)
-    local bar_y = 40
-    local bar_h = 28
-    screen.draw_rect(0, bar_y, 720, bar_h, {color = theme.bg_header, filled = true})
-
-    local x = 10
-    -- Type pill
-    local pw = ui.draw_type_pill(session.session_type, x, bar_y + 4)
-    x = x + pw + 6
-
-    -- Status pill
-    local sw = ui.draw_status_pill(session.status, x, bar_y + 4, session.status)
-    x = x + sw + 8
-
-    -- Command
-    local cmd = safe_ascii(session.pane_command or "")
-    if cmd ~= "" then
-        local max_cmd_w = 400
-        local cw = screen.get_text_width(cmd, 11, false)
-        if cw > max_cmd_w then
-            while #cmd > 1 and screen.get_text_width(cmd .. "..", 11, false) > max_cmd_w do
-                cmd = cmd:sub(1, -2)
-            end
-            cmd = cmd .. ".."
-        end
-        screen.draw_text(cmd, x, bar_y + 7, {color = theme.text_dim, size = 11})
-        x = x + screen.get_text_width(cmd, 11, false) + 8
-    end
-
-    -- Permission mode
-    if session.permission_mode then
-        local pm = session.permission_mode
-        local pm_bg_r, pm_bg_g, pm_bg_b = 60, 60, 80
-        if pm == "bypass" then
-            pm_bg_r, pm_bg_g, pm_bg_b = 200, 60, 60
-        elseif pm == "plan" then
-            pm_bg_r, pm_bg_g, pm_bg_b = 60, 120, 200
-        end
-        screen.draw_pill(pm, x, bar_y + 4, pm_bg_r, pm_bg_g, pm_bg_b, {
-            text_color = {255, 255, 255}, size = 9,
-        })
-    end
-
-    screen.draw_line(0, bar_y + bar_h, 720, bar_y + bar_h, {color = theme.border})
-end
-
--- ── Terminal Area ────────────────────────────────────────────────────────────
-
-local function draw_terminal(session, state)
-    local term_y = 68
-    local term_h = 392  -- 68 to 460
-    local lines = session.screen_content or {}
-    local n = #lines
-
-    -- Background
-    screen.draw_rect(0, term_y, 720, term_h, {color = theme.bg, filled = true})
-
-    if n == 0 then
-        ui.draw_loading("No terminal content", term_y, term_h)
-        return
-    end
-
-    local lh = screen.get_line_height(12, false)
-    local visible_lines = math.max(1, math.floor(term_h / lh))
-
-    -- Scroll from bottom: show last N lines, adjustable with terminal_scroll
-    local max_scroll = math.max(0, n - visible_lines)
-    state.terminal_scroll = math.max(0, math.min(state.terminal_scroll, max_scroll))
-
-    -- Start line: scroll=0 means bottom (latest), scroll=max means top
-    local start_line = math.max(1, n - visible_lines - state.terminal_scroll + 1)
-    local end_line = math.min(n, start_line + visible_lines - 1)
-
-    local y = term_y + 4
-    for i = start_line, end_line do
-        local line = safe_ascii(lines[i] or "")
-        -- Truncate long lines
-        screen.draw_text(line, 8, y, {color = theme.text, size = 12, max_width = 704})
-        y = y + lh
-    end
-
-    -- Scroll indicator for terminal
-    if n > visible_lines then
-        local ind_x = 715
-        local bar_top = term_y + 4
-        local bar_h2 = term_h - 8
-        screen.draw_line(ind_x, bar_top, ind_x, bar_top + bar_h2, {color = theme.border})
-        local thumb_h = math.max(8, math.floor(bar_h2 * visible_lines / n))
-        local progress = max_scroll > 0 and (state.terminal_scroll / max_scroll) or 0
-        local thumb_y = bar_top + math.floor((bar_h2 - thumb_h) * (1 - progress))
-        screen.draw_rect(ind_x - 1, thumb_y, 3, thumb_h, {color = theme.text_dim, filled = true, radius = 1})
-    end
-end
-
--- ── Options Area ────────────────────────────────────────────────────────────
--- Shows one suggestion at a time as a card. L2/R2 to navigate.
+local TERMINAL_LINES = 11
 
 local function build_options(session)
     local options = session.response_options or {}
@@ -142,127 +37,62 @@ local function build_options(session)
     return all_opts
 end
 
-local function draw_options(session, state)
-    local opts_y = 460
-    local opts_h = 200  -- 460 to 660
-    local W = 720
-
-    screen.draw_line(0, opts_y, W, opts_y, {color = theme.border})
-
-    local all_opts = build_options(session)
-    local n = #all_opts
-    state.option_index = math.max(1, math.min(state.option_index, n))
-    local opt = all_opts[state.option_index]
-
-    -- Card container
-    local card_x = 10
-    local card_y = opts_y + 8
-    local card_w = W - 20
-    local card_h = opts_h - 16
-    screen.draw_card(card_x, card_y, card_w, card_h, {
-        bg = theme.card_bg,
-        border = theme.card_border,
-        radius = 8,
-        shadow = false,
-    })
-
-    -- Header row: category pill + page indicator
-    local header_y = card_y + 8
-    local pw = ui.draw_category_pill(opt.category, card_x + 10, header_y)
-
-    local page_text = string.format("%d / %d", state.option_index, n)
-    local ptw = screen.get_text_width(page_text, 12, true)
-    screen.draw_text(page_text, card_x + card_w - ptw - 12, header_y + 1, {
-        color = theme.text_dim, size = 12, bold = true,
-    })
-
-    -- Suggestion text wrapped across multiple lines
-    local text_x = card_x + 14
-    local text_y = header_y + 28
-    local text_max_w = card_w - 28
-    local size = 14
-    local lh = screen.get_line_height(size, true)
-    local lines = ui.word_wrap(opt.text or "", text_max_w, size, true)
-
-    local max_lines = math.floor((card_h - 50) / lh)
-    for i = 1, math.min(#lines, max_lines) do
-        screen.draw_text(lines[i], text_x, text_y, {
-            color = theme.text, size = size, bold = true,
-        })
-        text_y = text_y + lh
-    end
-    -- Show ellipsis if truncated
-    if #lines > max_lines then
-        screen.draw_text("...", text_x, text_y, {color = theme.text_dim, size = size})
-    end
-
-    -- Page navigation hints inside the card (bottom)
-    local hint_y = card_y + card_h - 20
-    if n > 1 then
-        local left_hint = state.option_index > 1 and "< L2  " or ""
-        local right_hint = state.option_index < n and "  R2 >" or ""
-        local nav = left_hint .. string.format("%d/%d", state.option_index, n) .. right_hint
-        local nw = screen.get_text_width(nav, 11, false)
-        screen.draw_text(nav, card_x + (card_w - nw) / 2, hint_y, {
-            color = theme.text_dim, size = 11,
-        })
-    end
+local function get_selected_option(state, session)
+    local options = build_options(session)
+    state.option_index = math.max(1, math.min(state.option_index, #options))
+    return options[state.option_index]
 end
 
--- ── Footer Hints ────────────────────────────────────────────────────────────
-
-local function get_session_hints(session)
-    local hints = {
-        {"A", "Run", theme.btn_a},
-        {"Y", "Ctrl+C", theme.btn_y},
-        {"L2/R2", "Options", theme.btn_l},
-        {"B", "Back", theme.btn_b},
-        {"L1/R1", "Session", theme.btn_l},
-        {"\226\134\145\226\134\147", "Scroll"},
-    }
-
-    return hints
-end
-
--- ── Main Draw ───────────────────────────────────────────────────────────────
-
---- Draw the full session screen.
 function M.draw(state)
     local session = state.current_session
     if not session then
-        ui.draw_header("No Session")
-        ui.draw_loading("Select a session from dashboard", 68, 550)
-        ui.draw_footer({{"SEL", "Dashboard", theme.btn_r}})
+        U.header("VibeBoy", "REMOTE PANEL / TERMINAL", "Unavailable", C.muted)
+        U.empty("Session ended", "This session is no longer in the daemon's response. Return to the dashboard to choose another session.")
+        U.footer({{"B", "Back"}, {"SEL", "Sessions"}})
         return
     end
+    U.header("VibeBoy", "REMOTE PANEL / TERMINAL",
+        string.format("%d / %d sessions", state.session_index, #state.sessions), C.muted)
+    U.text(session.session_name or "Session", 24, 112, 24, C.paper, 500, true)
+    U.text(session.status or "idle", 548, 119, 14, ui.status_color(session.status), 148, true)
+    local context = ui.type_label(session.session_type) .. " / " .. (session.pane_command or "")
+    if session.permission_mode then context = context .. " / permissions: " .. session.permission_mode end
+    U.text(context, 24, 148, 14, C.muted, 672)
 
-    -- Header: "< L1  [session_name]  R1 >"
-    local idx_display = tostring(state.session_index) .. "/" .. tostring(#state.sessions)
-    ui.draw_header(safe_ascii(session.session_name or "Session"), idx_display)
+    U.panel(24, 176, 672, 264, C.panel)
+    local lines = session.screen_content or {}
+    local n = #lines
+    local max_scroll = math.max(0, n - TERMINAL_LINES)
+    state.terminal_scroll = math.max(0, math.min(state.terminal_scroll, max_scroll))
+    local first = math.max(1, n - TERMINAL_LINES - state.terminal_scroll + 1)
+    U.text(state.terminal_scroll == 0 and "TERMINAL / LATEST" or "TERMINAL / SCROLLBACK", 40, 187, 14, C.quiet, 530, true)
+    if n == 0 then
+        U.text("No terminal output received.", 40, 252, 16, C.muted, 632)
+    else
+        for index = first, math.min(n, first + TERMINAL_LINES - 1) do
+            U.text(lines[index], 40, 215 + (index - first) * 20, 16, C.paper, 632)
+        end
+        ui.scroll(215, 216, first, n, TERMINAL_LINES)
+    end
 
-    -- Status bar
-    draw_status_bar(session)
-
-    -- Terminal content
-    draw_terminal(session, state)
-
-    -- Options area
-    draw_options(session, state)
-
-    -- Footer
-    ui.draw_footer(get_session_hints(session))
+    local options = build_options(session)
+    local opt = get_selected_option(state, session)
+    U.panel(24, 454, 672, 174, C.panel2, opt.category == "danger" and C.red or C.teal)
+    U.text("RESPONSE / " .. string.upper(opt.category), 40, 466, 14, C.muted, 490, true)
+    U.text(string.format("%d / %d", state.option_index, #options), 604, 466, 14, C.muted, 76, true)
+    ui.lines(opt.text, 40, 497, 632, 18, 4, C.paper, true)
+    U.text(state.action_request_id and "Sending action..." or "A sends this response. Y interrupts the session.",
+        40, 603, 14, C.muted, 632)
+    U.text(state.connect_error ~= "" and state.connect_error or "D-pad scrolls output. L1/R1 switches session. X denies a waiting prompt.",
+        24, 644, 14, state.connect_error ~= "" and C.red or C.muted, 672)
+    U.footer({{"A", "Send"}, {"Y", "Stop"}, {"L2/R2", "Option"}, {"B", "Back"}, {"L1/R1", "Session"}})
 end
 
--- ── Input Handling ──────────────────────────────────────────────────────────
-
---- Handle input on session screen.
--- @return table|nil  {action=..., ...} action to send, or
---         string     "dashboard" to go back, "prev_session"/"next_session" to switch
 function M.on_input(state, button, action)
     if action ~= "press" and action ~= "repeat" then return nil end
     local session = state.current_session
     if not session then
-        if button == "select" then return "dashboard" end
+        if button == "select" or button == "b" then return "dashboard" end
         return nil
     end
 
@@ -283,7 +113,6 @@ function M.on_input(state, button, action)
     if button == "select" then return "dashboard" end
 
     -- Mode-specific controls
-    local stype = session.session_type
     local status = session.status
 
     -- All session types use the same option selection logic
@@ -313,27 +142,6 @@ function M.on_input(state, button, action)
         if status == "waiting" then
             return {action = "send_keys", session_id = sid, payload = {keys = "C-c"}}
         end
-    end
-    return nil
-end
-
-function get_selected_option(state, session)
-    local options = session.response_options or {}
-    local choices = session.detected_choices or {}
-    local all = {}
-    for _, o in ipairs(options) do
-        all[#all + 1] = {text = o.text, category = o.category, kind = "response"}
-    end
-    for _, c in ipairs(choices) do
-        all[#all + 1] = {
-            text = c.label,
-            category = c.is_default and "approve" or "custom",
-            kind = "choice",
-            key_sequence = c.key_sequence,
-        }
-    end
-    if state.option_index >= 1 and state.option_index <= #all then
-        return all[state.option_index]
     end
     return nil
 end

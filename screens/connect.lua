@@ -1,5 +1,7 @@
 -- screens/connect.lua — Connection settings screen
 
+local U = _G.ui.public
+local C = U.C
 local ui = require("ui")
 
 local M = {}
@@ -33,161 +35,62 @@ end
 
 --- Draw the connect screen.
 function M.draw(state)
-    ui.draw_header("VibeBoy")
+    local status = state.connecting and "Connecting" or state.connected and "Connected" or "Disconnected"
+    U.header("VibeBoy", "REMOTE PANEL / CONNECTION", status,
+        state.connected and C.green or state.connecting and C.gold or C.muted)
+    U.text("Connection settings", 24, 114, 18, C.paper, 672, true)
 
-    local content_y = 50
-    local W = 720
-    local card_w = 400
-    local card_x = (W - card_w) / 2
-
-    -- Status card
-    local status_y = content_y + 20
-    local status_text, status_color
-    if state.connected then
-        status_text = "Connected"
-        status_color = theme.positive
-    elseif state.connecting then
-        status_text = "Connecting..."
-        status_color = theme.text_warning or theme.orange
-    else
-        status_text = "Disconnected"
-        status_color = theme.negative
-    end
-
-    screen.draw_card(card_x, status_y, card_w, 50, {
-        bg = theme.card_bg, border = theme.card_border, radius = 6,
-    })
-    local sw = screen.get_text_width(status_text, 18, true)
-    screen.draw_text(status_text, (W - sw) / 2, status_y + 14, {
-        color = status_color, size = 18, bold = true,
-    })
-
-    -- Server card
-    local host_y = status_y + 70
-    local editing_host = state.edit_field == "host"
-    screen.draw_card(card_x, host_y, card_w, 60, {
-        bg = theme.card_bg,
-        border = editing_host and theme.accent or theme.card_border,
-        radius = 6,
-    })
-    screen.draw_text("SERVER", card_x + 16, host_y + 6, {color = theme.text_dim, size = 11})
-
-    if editing_host and state.host_edit_ip then
-        -- IP octet editing mode
-        local parts = parse_ip(state.host)
-        local ox = card_x + 16
-        local octet = state.host_octet or 1
+    local fg, secondary = U.row(24, 148, 672, 116, state.edit_field == "host")
+    U.text("SERVER", 40, 160, 14, secondary, 620, true)
+    if state.edit_field == "host" and state.host_edit_ip then
+        local parts, x = parse_ip(state.host), 40
         for i = 1, 4 do
-            local octet_str = tostring(parts[i])
-            local is_sel = (i == octet)
-            local c = is_sel and theme.accent or theme.text
-            if is_sel then
-                local ow = screen.get_text_width(octet_str, 18, true)
-                screen.draw_rect(ox, host_y + 42, ow, 2, {color = theme.accent, filled = true})
-            end
-            screen.draw_text(octet_str, ox, host_y + 24, {color = c, size = 18, bold = true})
-            ox = ox + screen.get_text_width(octet_str, 18, true)
-            if i < 4 then
-                screen.draw_text(".", ox, host_y + 24, {color = theme.text_dim, size = 18, bold = true})
-                ox = ox + screen.get_text_width(".", 18, true)
-            end
+            local value = tostring(parts[i])
+            local width = screen.get_text_width(value, 24, true)
+            U.text(value, x, 187, 24, fg, width, true)
+            if i == state.host_octet then U.rule(x, 218, width, C.red) end
+            x = x + width
+            if i < 4 then U.text(".", x, 187, 24, secondary, 16, true); x = x + 12 end
         end
-        local hint = "X:done  \226\151\132\226\151\182:octet  \226\151\128\226\151\182:value"
-        screen.draw_text(hint, card_x + card_w - 16 - screen.get_text_width(hint, 9, false), host_y + 28,
-            {color = theme.text_dim, size = 9})
-    elseif editing_host then
-        -- Server list cycling mode
-        screen.draw_text(state.host, card_x + 16, host_y + 24, {
-            color = theme.accent, size = 18, bold = true, max_width = card_w - 32,
-        })
-        local hint = "\226\151\128\226\151\182:cycle  X:new IP"
-        screen.draw_text(hint, card_x + card_w - 16 - screen.get_text_width(hint, 9, false), host_y + 28,
-            {color = theme.text_dim, size = 9})
+        U.text("UP/DOWN octet  /  LEFT/RIGHT value  /  A +10  /  X save", 40, 236, 14, secondary, 632)
     else
-        screen.draw_text(state.host, card_x + 16, host_y + 24, {
-            color = theme.text, size = 18, bold = true, max_width = card_w - 32,
-        })
+        U.text(state.host, 40, 187, 24, fg, 632, true)
+        U.text(state.edit_field == "host" and "D-pad chooses a saved server. X enters a new IP." or
+            "Choose a saved server or enter an IPv4 address.", 40, 236, 14, secondary, 632)
     end
 
-    -- Port card
-    local port_y = host_y + 80
-    screen.draw_card(card_x, port_y, card_w, 60, {
-        bg = theme.card_bg,
-        border = state.edit_field == "port" and theme.accent or theme.card_border,
-        radius = 6,
-    })
-    screen.draw_text("DAEMON PORT", card_x + 16, port_y + 6, {color = theme.text_dim, size = 11})
-    screen.draw_text(tostring(state.port), card_x + 16, port_y + 24, {color = theme.text, size = 18, bold = true})
-    if state.edit_field == "port" then
-        local hint = "\226\151\128 \226\151\182 adjust port"
-        screen.draw_text(hint, card_x + card_w - 16 - screen.get_text_width(hint, 10, false), port_y + 28,
-            {color = theme.text_dim, size = 10})
-    end
+    fg, secondary = U.row(24, 276, 672, 92, state.edit_field == "port")
+    U.text("DAEMON PORT", 40, 288, 14, secondary, 280, true)
+    U.display(tostring(state.port), 40, 312, 36, fg, 280)
+    U.text(state.edit_field == "port" and "LEFT/RIGHT 1  /  UP/DOWN 100" or "Default port 8766",
+        326, 326, 14, secondary, 350)
 
-    -- SSH card
-    local ssh_y = port_y + 80
-    local ssh_editing = state.edit_field == "ssh_user"
-    local ssh_border = ssh_editing and theme.accent
-        or state.ssh_enabled and theme.positive
-        or theme.card_border
-    screen.draw_card(card_x, ssh_y, card_w, 60, {
-        bg = theme.card_bg, border = ssh_border, radius = 6,
-    })
+    fg, secondary = U.row(24, 380, 672, 116, state.edit_field == "ssh_user")
+    U.text("SSH TUNNEL", 40, 392, 14, secondary, 400, true)
+    U.text(state.ssh_enabled and "ENABLED" or "OFF", 536, 392, 14,
+        state.edit_field == "ssh_user" and fg or state.ssh_enabled and C.green or C.muted, 140, true)
+    U.text(state.ssh_enabled and ("User: " .. (state.ssh_user ~= "" and state.ssh_user or "auto (SSH config)"))
+        or "Direct HTTP connection", 40, 420, 18, fg, 632, true)
+    U.text(state.edit_field == "ssh_user" and "D-pad cycles users. START moves to the next field." or
+        state.ssh_enabled and "Keys: /roms/Cartridge/ssh or ~/.ssh/" or "Y enables SSH tunneling.",
+        40, 464, 14, secondary, 632)
 
-    local ssh_label = state.ssh_enabled and "SSH TUNNEL: ON" or "SSH TUNNEL: OFF"
-    screen.draw_text(ssh_label, card_x + 16, ssh_y + 6, {
-        color = state.ssh_enabled and theme.positive or theme.text_dim, size = 11,
-    })
-
-    if state.ssh_enabled then
-        local display_user = state.ssh_user ~= "" and state.ssh_user or "auto (SSH config)"
-        local user_str = "User: " .. display_user
-        screen.draw_text(user_str, card_x + 16, ssh_y + 24, {
-            color = theme.text, size = 14, bold = ssh_editing,
-        })
-        screen.draw_text("Key: auto from SD card or ~/.ssh/", card_x + 16, ssh_y + 42, {
-            color = theme.text_dim, size = 11,
-        })
-        if ssh_editing then
-            local hint = "\226\151\128 \226\151\182 cycle user"
-            screen.draw_text(hint, card_x + card_w - 16 - screen.get_text_width(hint, 10, false), ssh_y + 28,
-                {color = theme.text_dim, size = 10})
-        end
-    else
-        screen.draw_text("Press Y to enable SSH tunneling", card_x + 16, ssh_y + 28, {
-            color = theme.text_dim, size = 13,
-        })
-    end
-
-    -- Connect button
-    local btn_y = ssh_y + 80
-    local btn_w = 200
-    local btn_x = (W - btn_w) / 2
-    local btn_bg = state.connecting and theme.card_bg or theme.accent
-    screen.draw_card(btn_x, btn_y, btn_w, 44, {bg = btn_bg, radius = 8})
-    local btn_label = state.connecting and "Connecting..." or "Connect"
-    local bw = screen.get_text_width(btn_label, 16, true)
-    screen.draw_text(btn_label, (W - bw) / 2, btn_y + 12, {
-        color = {20, 20, 30}, size = 16, bold = true,
-    })
-
-    -- Error message
+    U.panel(24, 512, 672, 58, state.connecting and C.panel2 or C.red)
+    U.text(state.connecting and state.connect_phase or state.edit_field and "B  Finish editing, then A to connect"
+        or "A  Connect to server", 40, 531, 18, state.connecting and C.paper or C.black, 632, true)
     if state.connect_error and state.connect_error ~= "" then
-        local err_y = btn_y + 60
-        local ew = screen.get_text_width(state.connect_error, 12, false)
-        screen.draw_text(state.connect_error, math.max(10, (W - ew) / 2), err_y,
-            {color = theme.negative, size = 12, max_width = W - 20})
+        ui.lines(state.connect_error, 24, 586, 672, 16, 3, C.red)
+    else
+        U.text("tmux sessions and terminal controls on your handheld.", 24, 590, 16, C.muted, 672)
     end
 
-    -- Footer
-    local hints = {{"A", "Connect", theme.btn_a}, {"Y", "SSH", theme.btn_y}}
-    if state.edit_field then
-        hints[#hints + 1] = {"B", "Done", theme.btn_b}
-        hints[#hints + 1] = {"START", "Next field", theme.btn_r}
+    if state.connecting then
+        U.footer({{"B", "Cancel"}, {"START", "Edit"}, {"Y", "SSH"}})
+    elseif state.edit_field then
+        U.footer({{"D-PAD", "Value"}, {"X", "IP"}, {"Y", "SSH"}, {"B", "Done"}, {"START", "Field"}})
     else
-        hints[#hints + 1] = {"START", "Edit", theme.btn_r}
+        U.footer({{"A", "Connect"}, {"Y", "SSH"}, {"START", "Edit"}})
     end
-    ui.draw_footer(hints)
 end
 
 --- Handle input on connect screen.
